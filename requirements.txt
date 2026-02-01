@@ -1,0 +1,10 @@
+streamlit
+pandas
+numpy
+google-generativeai
+pdfplumber
+yfinance
+altair
+openpyxl
+cryptography
+lxml
