@@ -1712,40 +1712,34 @@ if w17_in:
         ])
         
         # ==========================================
-        # Tab 1: 量子路徑預演 (Titan V85: Quantum Path Prediction - Mobile Commander)
+        # Tab 1: 量子路徑預演 (Titan V85: Mobile Commander Edition)
         # ==========================================
         with t1:
-            # [UI優化] 標題加大
-            st.markdown("""
-            <h3 style='color: #FFA500; margin-bottom: 0px;'>🔮 殿堂級全息戰略預演</h3>
-            <p style='color: #888; margin-top: 0px; font-size: 14px;'>Holographic Strategy V85</p>
-            """, unsafe_allow_html=True)
+            st.markdown("#### 🔮 殿堂級全息戰略預演 (Holographic Strategy)")
             
             # --- 1. 參數設定與運算核心 (Smart Calc) ---
             # 自動計算波動率 (ATR 概念模擬)
-            hist_volatility = sdf['Close'].pct_change().std() * 100 
-            current_vol = max(1.5, hist_volatility) 
+            hist_volatility = sdf['Close'].pct_change().std() * 100 # 歷史波動率
+            current_vol = max(1.5, hist_volatility) # 設一個地板值
 
-            # [UI優化] 參數區改為輸入框 (手機好點選)
+            # [手機優化] 戰略參數與劇本檢視器
             with st.expander("⚙️ 戰略參數與劇本檢視 (點擊展開)", expanded=False):
-                st.caption("🖐️ **手動輸入區**")
+                st.caption("🖐️ **手動輸入區** (取代滑桿，更精準)")
                 c1, c2 = st.columns(2)
                 with c1:
                     # [修正] Slider -> Number Input
                     sim_days = st.number_input("預演天數", min_value=10, max_value=120, value=20, step=5)
                 with c2:
-                    # [修正] 保留輸入框
-                    momentum_input = st.number_input("假設動能 (%)", -20.0, 20.0, 0.0, step=0.5)
+                    # [保留] 動能輸入框
+                    momentum_input = st.number_input("假設動能 (%)", -10.0, 10.0, 0.0, step=0.5)
                 
                 st.markdown("---")
-                
-                # [新增] 劇本分流檢視 (Scenario Inspector) - 點開才看，不佔位
-                st.caption("📂 **分流劇本檢視 (點擊展開詳情)**")
+                st.caption("📂 **分流劇本檢視 (Scenario Inspector)**")
                 
                 # 劇本 A
                 with st.expander("📉 劇本 A：慣性震盪 (Inertia)", expanded=False):
-                    st.write("**戰略邏輯**：沿著目前趨勢與季線乖離前進。")
-                    # (此處可視需要加入迷你圖，為保持手機流暢，文字說明為主)
+                    st.write("**戰略邏輯**：沿著目前 10MA 斜率慣性前進。")
+                    st.info("此路徑為系統預設顯示的主路徑 (白虛線)。")
                 
                 # 劇本 B
                 with st.expander("🚀 劇本 B：波動率噴出 (Bull)", expanded=False):
@@ -1760,7 +1754,7 @@ if w17_in:
             last_date = sdf.index[-1]
             future_dates = [last_date + pd.Timedelta(days=i+1) for i in range(future_days)]
             
-            # --- 2. 建立「五維全息劇本」 (保留原版運算邏輯) ---
+            # --- 2. 建立「五維全息劇本」 (保留原版邏輯) ---
             
             # 劇本 A: 慣性 (Inertia) - 跟隨目前 10MA 斜率
             slope_10 = (sdf['Close'].iloc[-1] - sdf['Close'].iloc[-10]) / 10
@@ -1772,7 +1766,7 @@ if w17_in:
             # 劇本 C: 波動率下緣 (Bear Case)
             path_bear = [cp * (1 - (current_vol/100) * np.sqrt(i+1)) for i in range(future_days)]
 
-            # 選擇主要顯示路徑 (根據用戶輸入微調 - 這是主圖畫的那條白線)
+            # 選擇主要顯示路徑 (根據用戶輸入微調)
             sim_prices = []
             curr_sim = cp
             for i in range(future_days):
@@ -1809,14 +1803,22 @@ if w17_in:
 
             # --- 3. 🤖 G-Score 量化評分 (保留原版邏輯) ---
             score = 0
+            
+            # 因子 A: 趨勢
             ma87_curr = combined_ma87.iloc[-future_days-1]
             ma284_curr = combined_ma284.iloc[-future_days-1]
             if cp > ma87_curr: score += 15
             if cp > ma284_curr: score += 15
+            
+            # 因子 B: 動能
             if cp > sdf['Close'].iloc[-20:].mean(): score += 20
+            
+            # 因子 C: 雙線結構
             bias_diff = abs(ma87_curr - ma284_curr) / ma284_curr
             is_squeeze = bias_diff < 0.015 
             if ma87_curr > ma284_curr: score += 30 
+            
+            # 因子 D: 扣抵壓力
             future_deduct_87_avg = np.mean(deduct_87[:20])
             if future_deduct_87_avg < cp: score += 20 
             
@@ -1826,7 +1828,7 @@ if w17_in:
             else: g_status = "🐻 空頭承壓 (Bearish Pressure)"; g_color = "#FF4B4B"
 
             # --- 4. 📱 總司令戰報 (Commander's Briefing) ---
-            # [UI優化] 字體暴力放大 + 結構化顯示
+            # [手機優化] HTML 大字體渲染
             
             fib_high = max(path_bull)
             fib_low = min(path_bear)
@@ -1842,18 +1844,22 @@ if w17_in:
             <div style="background-color:#1E1E1E; padding:15px; border-radius:10px; border: 1px solid #444; margin-bottom: 20px;">
                 <div style="display:flex; justify-content:space-between; align-items:center;">
                     <span style="font-size:18px; color:#ddd;">📊 G-Score 總評</span>
-                    <span style="font-size:32px; font-weight:bold; color:{g_color};">{score}</span>
+                    <span style="font-size:32px; font-weight:bold; color:{g_color};">{score} 分</span>
                 </div>
-                <div style="margin-top:5px; font-size:20px; font-weight:bold; color:{g_color};">
-                    {g_status}
+                <div style="margin-top:5px;">
+                    <span style="font-size:16px; color:#aaa;">狀態：</span>
+                    <span style="font-size:24px; font-weight:bold; color:{g_color};">{g_status}</span>
                 </div>
-                <div style="margin-top:5px; font-size:16px; color:#ccc;">
-                    指令：<b>{'積極操作' if score>70 else '觀望/區間' if score>40 else '保守防禦'}</b>
+                <div style="margin-top:5px;">
+                    <span style="font-size:16px; color:#aaa;">指令：</span>
+                    <span style="font-size:18px; font-weight:bold; color:#fff; background-color:{g_color}40; padding:2px 8px; border-radius:4px;">
+                        {'積極操作' if score>70 else '觀望/區間' if score>40 else '保守防禦'}
+                    </span>
                 </div>
                 
                 <hr style="border-top: 1px solid #555; margin: 15px 0;">
                 
-                <div style="font-size:18px; color:#4db8ff; font-weight:bold; margin-bottom:10px;">⚔️ 雙線糾纏場</div>
+                <div style="font-size:20px; color:#4db8ff; font-weight:bold; margin-bottom:10px;">⚔️ 雙線糾纏場</div>
                 <div style="font-size:16px; color:#ddd; line-height:1.6;">
                     {squeeze_msg}<br>
                     • <b>87MA(季)</b>：{ma87_curr:.1f} (扣抵 {deduct_87[0]:.1f})<br>
@@ -1862,7 +1868,7 @@ if w17_in:
 
                 <hr style="border-top: 1px solid #555; margin: 15px 0;">
                 
-                <div style="font-size:18px; color:#98FB98; font-weight:bold; margin-bottom:10px;">🔮 五維全息劇本</div>
+                <div style="font-size:20px; color:#98FB98; font-weight:bold; margin-bottom:10px;">🔮 五維全息劇本</div>
                 <div style="font-size:16px; color:#ccc; line-height:1.6;">
                     關鍵窗：<b>{(last_date + pd.Timedelta(days=13)).strftime('%m/%d')}</b><br>
                     • <b>慣性 A</b>：{fib_low:.1f} ~ {fib_high:.1f} 震盪<br>
@@ -1872,8 +1878,7 @@ if w17_in:
             </div>
             """, unsafe_allow_html=True)
             
-            # --- 5. 視覺化 (保留原版 Altair 波動率機率錐) ---
-            # [UI優化] 加上 properties(height=450) 確保手機滿版
+            # --- 5. 視覺化 (Altair 波動率機率錐 - 手機滿版) ---
             
             base = alt.Chart(f_df).encode(x=alt.X('Date:T', axis=alt.Axis(labelFontSize=12)))
             
@@ -1881,9 +1886,9 @@ if w17_in:
                 y='Bear_Bound:Q', y2='Bull_Bound:Q'
             )
             
-            line_sim = base.mark_line(color='white', strokeDash=[4,2], strokeWidth=2).encode(y='Sim_Price')
-            line_87 = base.mark_line(color='orange', strokeWidth=3).encode(y='MA87')
-            line_284 = base.mark_line(color='#00bfff', strokeWidth=3).encode(y='MA284')
+            line_sim = base.mark_line(color='white', strokeDash=[4,2]).encode(y='Sim_Price')
+            line_87 = base.mark_line(color='orange', strokeWidth=2).encode(y='MA87')
+            line_284 = base.mark_line(color='#00bfff', strokeWidth=2).encode(y='MA284')
             
             ghost_87 = base.mark_line(color='red', strokeDash=[1,1], opacity=0.5).encode(y='Deduct_87')
             ghost_284 = base.mark_line(color='blue', strokeDash=[1,1], opacity=0.3).encode(y='Deduct_284')
@@ -1895,7 +1900,7 @@ if w17_in:
                      color=alt.condition("datum.Open <= datum.Close", alt.value("#FF4B4B"), alt.value("#00AA00")))
 
             chart = (cone + candle + line_sim + line_87 + line_284 + ghost_87 + ghost_284).properties(
-                height=450, # 正方形構圖
+                height=450, # 正方形構圖，手機滿版
                 title="量子路徑預演 (手機戰情版)"
             ).configure_axis(
                 labelFontSize=14,
