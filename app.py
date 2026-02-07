@@ -1712,7 +1712,7 @@ if w17_in:
         ])
         
         # ==========================================
-        # Tab 1: 量子路徑預演 (Titan V85: Mobile Commander Edition)
+        # Tab 1: 量子路徑預演 (Titan V82: Quantum Path Prediction)
         # ==========================================
         with t1:
             st.markdown("#### 🔮 殿堂級全息戰略預演 (Holographic Strategy)")
@@ -1720,41 +1720,25 @@ if w17_in:
             # --- 1. 參數設定與運算核心 (Smart Calc) ---
             # 自動計算波動率 (ATR 概念模擬)
             hist_volatility = sdf['Close'].pct_change().std() * 100 # 歷史波動率
-            current_vol = max(1.5, hist_volatility) # 設一個地板值
+            current_vol = max(1.5, hist_volatility) # 設一個地板值，避免死魚股波動太小
 
-            # [手機優化] 戰略參數與劇本檢視器
-            with st.expander("⚙️ 戰略參數與劇本檢視 (點擊展開)", expanded=False):
-                st.caption("🖐️ **手動輸入區** (取代滑桿，更精準)")
+            # 擴展版面設定 (手機優化)
+            with st.expander("⚙️ 戰略參數設定 (點擊展開)", expanded=False):
                 c1, c2 = st.columns(2)
                 with c1:
-                    # [修正] Slider -> Number Input
-                    sim_days = st.number_input("預演天數", min_value=10, max_value=120, value=20, step=5)
+                    sim_days = st.slider("預演天數", 10, 60, 20)
                 with c2:
-                    # [保留] 動能輸入框
+                    # 不再只是死板輸入，而是作為「動能參數」
                     momentum_input = st.number_input("假設動能 (%)", -10.0, 10.0, 0.0, step=0.5)
-                
-                st.markdown("---")
-                st.caption("📂 **分流劇本檢視 (Scenario Inspector)**")
-                
-                # 劇本 A
-                with st.expander("📉 劇本 A：慣性震盪 (Inertia)", expanded=False):
-                    st.write("**戰略邏輯**：沿著目前 10MA 斜率慣性前進。")
-                    st.info("此路徑為系統預設顯示的主路徑 (白虛線)。")
-                
-                # 劇本 B
-                with st.expander("🚀 劇本 B：波動率噴出 (Bull)", expanded=False):
-                    st.write(f"**戰略邏輯**：多頭動能轉強，挑戰波動率上緣 (+{current_vol:.1f}%)。")
-                
-                # 劇本 C
-                with st.expander("🐻 劇本 C：地心引力回測 (Bear)", expanded=False):
-                    st.write(f"**戰略邏輯**：空頭襲擊，回測波動率下緣 (-{current_vol:.1f}%)。")
-
+                    st.caption(f"目前波動率: {current_vol:.1f}%")
+            
             # 準備數據
-            future_days = int(sim_days)
+            future_days = sim_days
             last_date = sdf.index[-1]
             future_dates = [last_date + pd.Timedelta(days=i+1) for i in range(future_days)]
             
-            # --- 2. 建立「五維全息劇本」 (保留原版邏輯) ---
+            # --- 2. 建立「五維全息劇本」 (5D Scenarios) ---
+            # 核心邏輯：不是畫一條線，而是畫出「機率錐」
             
             # 劇本 A: 慣性 (Inertia) - 跟隨目前 10MA 斜率
             slope_10 = (sdf['Close'].iloc[-1] - sdf['Close'].iloc[-10]) / 10
@@ -1793,106 +1777,104 @@ if w17_in:
             f_df = pd.DataFrame({
                 'Date': future_dates,
                 'Sim_Price': sim_prices,
-                'Bull_Bound': path_bull, 
-                'Bear_Bound': path_bear, 
+                'Bull_Bound': path_bull, # 機率錐上緣
+                'Bear_Bound': path_bear, # 機率錐下緣
                 'MA87': combined_ma87.loc[future_dates].values,
                 'MA284': combined_ma284.loc[future_dates].values,
                 'Deduct_87': deduct_87,
                 'Deduct_284': deduct_284
             })
 
-            # --- 3. 🤖 G-Score 量化評分 (保留原版邏輯) ---
+            # --- 3. 🤖 G-Score 量化評分系統 (The God Score) ---
             score = 0
+            reasons = []
             
-            # 因子 A: 趨勢
+            # 因子 A: 趨勢 (30分)
             ma87_curr = combined_ma87.iloc[-future_days-1]
             ma284_curr = combined_ma284.iloc[-future_days-1]
             if cp > ma87_curr: score += 15
             if cp > ma284_curr: score += 15
             
-            # 因子 B: 動能
+            # 因子 B: 動能 (20分)
             if cp > sdf['Close'].iloc[-20:].mean(): score += 20
             
-            # 因子 C: 雙線結構
+            # 因子 C: 雙線結構 (30分)
             bias_diff = abs(ma87_curr - ma284_curr) / ma284_curr
-            is_squeeze = bias_diff < 0.015 
-            if ma87_curr > ma284_curr: score += 30 
+            is_squeeze = bias_diff < 0.015 # 乖離小於 1.5% 視為糾纏
+            if ma87_curr > ma284_curr: score += 30 # 黃金排列
             
-            # 因子 D: 扣抵壓力
+            # 因子 D: 扣抵壓力 (20分)
             future_deduct_87_avg = np.mean(deduct_87[:20])
-            if future_deduct_87_avg < cp: score += 20 
+            if future_deduct_87_avg < cp: score += 20 # 扣抵低值
             
             # 狀態定義
-            if score >= 80: g_status = "🔥 多頭坦途 (Clear Sky)"; g_color = "#00FF00"
-            elif score >= 50: g_status = "⚠️ 區間震盪 (Range Bound)"; g_color = "#FFA500"
-            else: g_status = "🐻 空頭承壓 (Bearish Pressure)"; g_color = "#FF4B4B"
+            if score >= 80: g_status = "🔥 多頭坦途 (Clear Sky)"
+            elif score >= 50: g_status = "⚠️ 區間震盪 (Range Bound)"
+            else: g_status = "🐻 空頭承壓 (Bearish Pressure)"
 
             # --- 4. 📱 總司令戰報 (Commander's Briefing) ---
-            # [手機優化] HTML 大字體渲染
+            # 這是 V82 的核心：極致細緻的手機版文字介面
             
+            # 計算關鍵價位
             fib_high = max(path_bull)
             fib_low = min(path_bear)
             fib_0618 = fib_low + (fib_high - fib_low) * 0.618
             
+            # 雙線糾纏邏輯
             squeeze_msg = ""
             if is_squeeze:
-                squeeze_msg = f"🌪️ <b>螺旋絞殺 (Squeeze)</b>：乖離僅 <b>{bias_diff*100:.2f}%</b>，變盤在即。"
+                squeeze_msg = f"🌪️ **螺旋絞殺 (Squeeze)**：87MA 與 284MA 乖離僅 **{bias_diff*100:.2f}%**。兩線打結，預計 **3-5天內** 出現大變盤。"
             else:
-                squeeze_msg = "🚀 <b>發散攻擊</b>" if ma87_curr > ma284_curr else "📉 <b>空頭壓制</b>"
+                if ma87_curr > ma284_curr:
+                    squeeze_msg = "🚀 **發散攻擊**：均線呈多頭排列，開口擴大，趨勢明確。"
+                else:
+                    squeeze_msg = "📉 **空頭壓制**：均線呈空頭排列，上方層層賣壓。"
 
+            # 顯示戰報區塊
             st.markdown(f"""
-            <div style="background-color:#1E1E1E; padding:15px; border-radius:10px; border: 1px solid #444; margin-bottom: 20px;">
-                <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <span style="font-size:18px; color:#ddd;">📊 G-Score 總評</span>
-                    <span style="font-size:32px; font-weight:bold; color:{g_color};">{score} 分</span>
-                </div>
-                <div style="margin-top:5px;">
-                    <span style="font-size:16px; color:#aaa;">狀態：</span>
-                    <span style="font-size:24px; font-weight:bold; color:{g_color};">{g_status}</span>
-                </div>
-                <div style="margin-top:5px;">
-                    <span style="font-size:16px; color:#aaa;">指令：</span>
-                    <span style="font-size:18px; font-weight:bold; color:#fff; background-color:{g_color}40; padding:2px 8px; border-radius:4px;">
-                        {'積極操作' if score>70 else '觀望/區間' if score>40 else '保守防禦'}
-                    </span>
-                </div>
-                
-                <hr style="border-top: 1px solid #555; margin: 15px 0;">
-                
-                <div style="font-size:20px; color:#4db8ff; font-weight:bold; margin-bottom:10px;">⚔️ 雙線糾纏場</div>
-                <div style="font-size:16px; color:#ddd; line-height:1.6;">
-                    {squeeze_msg}<br>
-                    • <b>87MA(季)</b>：{ma87_curr:.1f} (扣抵 {deduct_87[0]:.1f})<br>
-                    • <b>284MA(年)</b>：{ma284_curr:.1f} (扣抵 {deduct_284[0]:.1f})
-                </div>
-
-                <hr style="border-top: 1px solid #555; margin: 15px 0;">
-                
-                <div style="font-size:20px; color:#98FB98; font-weight:bold; margin-bottom:10px;">🔮 五維全息劇本</div>
-                <div style="font-size:16px; color:#ccc; line-height:1.6;">
-                    關鍵窗：<b>{(last_date + pd.Timedelta(days=13)).strftime('%m/%d')}</b><br>
-                    • <b>慣性 A</b>：{fib_low:.1f} ~ {fib_high:.1f} 震盪<br>
-                    • <b>破底 B</b>：測 {fib_0618:.1f} 不破翻<br>
-                    • <b>風險 C</b>：破 {min(deduct_87[:5]):.1f} 蓋頭
-                </div>
+            <div style="background-color:#1E1E1E; padding:15px; border-radius:10px; border: 1px solid #444;">
+                <h3 style="color:#FFA500; margin:0;">📊 G-Score 量化總評：{score} 分</h3>
+                <p style="color:#ddd; margin-top:5px;">狀態：<b>{g_status}</b> | 指令：<b>{'積極操作' if score>70 else '觀望/區間' if score>40 else '保守防禦'}</b></p>
+                <hr style="border-top: 1px solid #555;">
+                <h4 style="color:#4db8ff; margin:0;">⚔️ 雙線糾纏場 (Interaction)</h4>
+                <p style="color:#ccc; font-size:14px; margin-top:5px;">{squeeze_msg}</p>
+                <p style="color:#ccc; font-size:14px;">
+                   • <b>87MA (季)</b>：{ma87_curr:.1f}元 | 扣抵位置：{deduct_87[0]:.1f}元 ({'扣低助漲' if deduct_87[0]<cp else '扣高壓力'})<br>
+                   • <b>284MA (年)</b>：{ma284_curr:.1f}元 | 扣抵位置：{deduct_284[0]:.1f}元
+                </p>
+                <hr style="border-top: 1px solid #555;">
+                <h4 style="color:#98FB98; margin:0;">🔮 五維全息劇本 (Scenarios)</h4>
+                <p style="color:#ccc; font-size:14px; margin-top:5px;">關鍵變盤窗：<b>{(last_date + pd.Timedelta(days=13)).strftime('%m/%d')} (費氏轉折)</b></p>
+                <ul style="color:#ccc; font-size:14px; padding-left:20px;">
+                    <li><b>劇本 A (慣性 50%)</b>：股價在 <b>{fib_low:.1f} ~ {fib_high:.1f}元</b> 區間震盪，以盤代跌。</li>
+                    <li><b>劇本 B (破底翻 30%)</b>：回測 <b>{fib_0618:.1f}元</b> (Fib 0.618) 支撐不破，V型反轉。</li>
+                    <li><b>劇本 C (風險 20%)</b>：若收盤跌破 <b>{min(deduct_87[:5]):.1f}元</b>，確認均線蓋頭，向下尋求支撐。</li>
+                </ul>
             </div>
             """, unsafe_allow_html=True)
             
-            # --- 5. 視覺化 (Altair 波動率機率錐 - 手機滿版) ---
+            st.write("") # Spacer
+
+            # --- 5. 視覺化 (Altair 波動率機率錐) ---
+            # 這是 User 習慣的介面，加上機率錐 (Band)
             
-            base = alt.Chart(f_df).encode(x=alt.X('Date:T', axis=alt.Axis(labelFontSize=12)))
+            base = alt.Chart(f_df).encode(x='Date:T')
             
+            # 機率錐 (Fan Chart)
             cone = base.mark_area(opacity=0.2, color='gray').encode(
                 y='Bear_Bound:Q', y2='Bull_Bound:Q'
             )
             
+            # 模擬線與均線
             line_sim = base.mark_line(color='white', strokeDash=[4,2]).encode(y='Sim_Price')
             line_87 = base.mark_line(color='orange', strokeWidth=2).encode(y='MA87')
             line_284 = base.mark_line(color='#00bfff', strokeWidth=2).encode(y='MA284')
             
+            # 幽靈線 (Deduction)
             ghost_87 = base.mark_line(color='red', strokeDash=[1,1], opacity=0.5).encode(y='Deduct_87')
             ghost_284 = base.mark_line(color='blue', strokeDash=[1,1], opacity=0.3).encode(y='Deduct_284')
             
+            # 歷史K線 (簡化版)
             hist_df = sdf.iloc[-60:].reset_index()
             base_hist = alt.Chart(hist_df).encode(x='Date:T')
             candle = base_hist.mark_rule().encode(y='Low', y2='High') + \
@@ -1900,14 +1882,11 @@ if w17_in:
                      color=alt.condition("datum.Open <= datum.Close", alt.value("#FF4B4B"), alt.value("#00AA00")))
 
             chart = (cone + candle + line_sim + line_87 + line_284 + ghost_87 + ghost_284).properties(
-                height=450, # 正方形構圖，手機滿版
-                title="量子路徑預演 (手機戰情版)"
-            ).configure_axis(
-                labelFontSize=14,
-                titleFontSize=16
-            ).interactive()
+                height=500,
+                title="量子路徑預演 (含波動率機率錐)"
+            )
             
-            st.altair_chart(chart, use_container_width=True)
+            st.altair_chart(chart.interactive(), use_container_width=True)
         with t2: # 亞當
             adf = macro.calculate_adam_projection(sdf, 20)
             if not adf.empty:
