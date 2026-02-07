@@ -8,3 +8,4 @@ altair
 openpyxl
 cryptography
 lxml
+plotly
