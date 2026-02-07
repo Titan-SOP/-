@@ -42,7 +42,7 @@ def load_system():
 kb, macro, strategy, intel, calendar, backtester = load_system()
 
 st.set_page_config(page_title="Titan SOP V78.2", layout="wide", page_icon="🏛️")
-st.title("🏛️ Titan SOP 全自動戰情室 (V78.2 雙雷達修復版)")
+st.title("🏛️ Titan SOP 全自動戰情室 (V99.9 天神)")
 
 @st.cache_data(ttl=7200)
 def get_macro_data(_macro, _df):
