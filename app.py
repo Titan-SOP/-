@@ -41,6 +41,78 @@ def load_system():
 
 kb, macro, strategy, intel, calendar, backtester = load_system()
 
+@st.cache_data(ttl=7200)
+def run_fast_backtest(ticker, start_date="2023-01-01", initial_capital=1000000):
+    """
+    極速向量化回測引擎 (Vectorized Backtest Engine)
+    策略邏輯：模擬趨勢追蹤 (Trend Following) - 當收盤價 > 20日均線且成交量放大時買入
+    """
+    try:
+        # 1. 處理代碼 (自動補全 .TW/.TWO)
+        if not (ticker.endswith('.TW') or ticker.endswith('.TWO') or ticker.isalpha()):
+            # 簡單判斷：若為數字且無後綴，預設為 .TW (上市)，若找不到再試 .TWO? 這裡先預設 .TW
+            ticker = f"{ticker}.TW" 
+        
+        # 2. 下載數據
+        df = yf.download(ticker, start=start_date, progress=False)
+        if df.empty: 
+            # 如果 .TW 失敗，嘗試 .TWO
+            if ticker.endswith('.TW'):
+                ticker_two = ticker.replace('.TW', '.TWO')
+                df = yf.download(ticker_two, start=start_date, progress=False)
+            if df.empty:
+                return None
+        
+        # 若是 MultiIndex Columns (yfinance 新版)，扁平化處理
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+
+        # 3. 策略信號生成 (Signal Generation)
+        # 模擬 SOP 邏輯：股價在 20MA 之上 (趨勢多)
+        df['MA20'] = df['Close'].rolling(window=20).mean()
+        df['Signal'] = 0
+        # 當收盤 > 20MA 持有 (1), 否則空手 (0)
+        df.loc[df['Close'] > df['MA20'], 'Signal'] = 1
+        
+        # 4. 績效計算 (Vectorized)
+        df['Pct_Change'] = df['Close'].pct_change()
+        # 策略回報 = 昨日信號 * 今日漲跌
+        df['Strategy_Return'] = df['Signal'].shift(1) * df['Pct_Change']
+        
+        # 5. 凱利參數計算
+        # 過濾出有交易的日子
+        trade_days = df[df['Signal'].shift(1) == 1]
+        if len(trade_days) < 10: return None # 樣本不足
+
+        wins = trade_days[trade_days['Strategy_Return'] > 0]['Strategy_Return']
+        losses = trade_days[trade_days['Strategy_Return'] < 0]['Strategy_Return']
+        
+        win_rate = len(wins) / len(trade_days) if len(trade_days) > 0 else 0
+        avg_win = wins.mean() if len(wins) > 0 else 0
+        avg_loss = abs(losses.mean()) if len(losses) > 0 else 1
+        profit_factor = avg_win / avg_loss if avg_loss != 0 else 0
+        
+        # 凱利公式: f = (bp - q) / b = p - (q / b)
+        # b = profit_factor (賠率), p = win_rate, q = 1-p
+        if profit_factor > 0:
+            kelly = win_rate - ((1 - win_rate) / profit_factor)
+        else:
+            kelly = 0
+            
+        # 權益曲線
+        df['Equity'] = (1 + df['Strategy_Return'].fillna(0)).cumprod() * initial_capital
+        
+        return {
+            "win_rate": win_rate,
+            "profit_factor": profit_factor,
+            "kelly": max(0, kelly), # 負值歸零
+            "total_return": df['Equity'].iloc[-1] / initial_capital - 1,
+            "max_drawdown": (df['Equity'] / df['Equity'].cummax() - 1).min(),
+            "equity_curve": df['Equity']
+        }
+    except Exception as e:
+        return None
+
 # --- 效能補丁: 120 分鐘戰術緩存 ---
 @st.cache_data(ttl=7200)
 def get_macro_data(_macro, _df):
@@ -1919,31 +1991,24 @@ with tab2: # 可轉債獵殺專區
             st.info("請先執行本頁上方的掃描以獲取買進建議。")
         
     with st.expander("2.5 歷史回測驗證 (Strategy Backtest)", expanded=False):
-        if 'scan_results' in st.session_state:
-            results_df = st.session_state['scan_results']
-            if not results_df.empty:
-                st.info("對推薦標的進行過去一年的回測，模擬『站上 87MA 買進、跌破賣出』的績效。")
-                
-                recommendations = results_df[results_df['action'].str.contains('買進', na=False)].head(5)
-                
-                for _, row in recommendations.iterrows():
-                    stock_code = row['stock_code']
-                    cb_name = row['name']
-                    
-                    if st.button(f"🔙 跑回測 (1年): {cb_name}"):
-                        with st.spinner(f"正在為 {cb_name} 執行回測..."):
-                            ticker = f"{stock_code}.TW"
-                            trades_df = backtester.run_simulation(ticker, cb_name)
-                            report, detailed_trades = backtester.generate_report(trades_df)
-                            
-                            st.text(report)
-                            if not detailed_trades.empty:
-                                st.dataframe(detailed_trades)
+        st.info("對指定標的進行過去一年的回測，模擬『收盤價站上 20MA 買進、跌破賣出』的績效。")
+        backtest_ticker = st.text_input("輸入回測代號", value="2330")
 
-            else:
-                st.warning("請先點擊本頁上方的掃描按鈕以生成推薦標的。")
-        else:
-            st.info("請先點擊本頁上方的掃描按鈕以生成推薦標的。")
+        if st.button("🚀 啟動極速回測"):
+            with st.spinner(f"正在為 {backtest_ticker} 執行向量化回測..."):
+                result = run_fast_backtest(backtest_ticker)
+                
+                if result:
+                    st.subheader(f"📈 回測績效報告: {backtest_ticker}")
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("勝率 (Win Rate)", f"{result['win_rate']:.2%}")
+                    c2.metric("盈虧比 (Profit Factor)", f"{result['profit_factor']:.2f}")
+                    c3.metric("凱利建議倉位 (Kelly %)", f"{result['kelly']:.2%}")
+                    
+                    st.subheader("權益曲線 (Equity Curve)")
+                    st.line_chart(result['equity_curve'])
+                else:
+                    st.error(f"回測失敗。請檢查代號 '{backtest_ticker}' 是否正確，或該時段內是否有足夠數據。")
 
 with tab3: # 單兵狙擊總部
     render_sniper_tab()
@@ -2023,6 +2088,68 @@ with tab4: # 戰力升級
         * **4. 組合風險矩陣 (Portfolio Risk Matrix)**
         * **5. AI 財報關鍵字獵殺升級 (AI Keyword Hunter V2)**
         """)
+
+    with st.expander("4.3 ⚖️ 凱利公式自動倉位演算 (Kelly Execution Engine)", expanded=False):
+        st.subheader("機構級資金控管中樞")
+        st.info("基於回測數據，計算每筆交易應投入的資金比例，以最大化長期複合成長率。")
+        
+        kelly_tickers_input = st.text_area(
+            "輸入候選股票 (格式: `代號, 預計總資金`)", 
+            "2330, 1000000\n3231, 500000\n2317, 800000"
+        )
+
+        if st.button("🧮 計算最佳下注比例"):
+            with st.spinner("執行多標的回測與凱利演算..."):
+                lines = [line.strip() for line in kelly_tickers_input.split('\n') if line.strip()]
+                results_list = []
+                
+                for line in lines:
+                    try:
+                        ticker, capital_str = line.split(',')
+                        ticker = ticker.strip()
+                        capital = float(capital_str.strip())
+                        
+                        result = run_fast_backtest(ticker)
+                        
+                        if result:
+                            kelly_pct = result['kelly']
+                            suggested_amount = kelly_pct * capital
+                            
+                            advice = "🧊 觀望或試單"
+                            if kelly_pct > 0.2:
+                                advice = "🔥🔥 重注進攻"
+                            elif kelly_pct >= 0.05:
+                                advice = "✅ 穩健配置"
+
+                            results_list.append({
+                                "股票": ticker,
+                                "勝率": result['win_rate'],
+                                "賠率 (盈虧比)": result['profit_factor'],
+                                "凱利建議倉位 %": kelly_pct,
+                                "建議下注金額": suggested_amount,
+                                "高盛級建議": advice
+                            })
+                        else:
+                             results_list.append({
+                                "股票": ticker, "勝率": "N/A", "賠率 (盈虧比)": "N/A",
+                                "凱利建議倉位 %": "N/A", "建議下注金額": "N/A", "高盛級建議": "❌ 回測失敗"
+                            })
+                    except ValueError:
+                        st.warning(f"跳過格式錯誤的行: '{line}'")
+                        continue
+                
+                if results_list:
+                    results_df = pd.DataFrame(results_list)
+                    st.dataframe(results_df.style
+                        .format({
+                            "勝率": "{:.2%}",
+                            "賠率 (盈虧比)": "{:.2f}",
+                            "凱利建議倉位 %": "{:.2%}",
+                            "建議下注金額": "{:,.0f} 元"
+                        })
+                    )
+                else:
+                    st.warning("未輸入有效標的或所有回測均失敗。")
 
 with tab5: # 戰略百科
     with st.expander("5.1 SOP 戰略百科 (SOP Strategy Encyclopedia)", expanded=False):
