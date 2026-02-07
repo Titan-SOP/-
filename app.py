@@ -920,138 +920,198 @@ else:
                         plot_candle_chart(cb_code)
 
     # ==========================================
-    # Tab 5: 產業風口地圖 (Titan V102: Galaxy Map & Roster)
-    # ==========================================
-    with tab5:
-        st.subheader("🌌 2026 全產業鏈價值矩陣 (Galaxy Value Map)")
-        
-        # --- 1. 核心數據處理 (TPEx 字典 + 清洗) ---
-        @st.cache_data(ttl=3600)
-        def get_tpex_data(raw_df):
-            # TPEx 級別產業鏈字典 (手動定義精華版)
-            chain_map = {
-                # [半導體]
-                '世芯': ('半導體', '⬆️ 上游-IP與設計', '矽智財 (IP)'), '創意': ('半導體', '⬆️ 上游-IP與設計', '矽智財 (IP)'),
-                'M31': ('半導體', '⬆️ 上游-IP與設計', '矽智財 (IP)'), '力旺': ('半導體', '⬆️ 上游-IP與設計', '矽智財 (IP)'),
-                '聯發科': ('半導體', '⬆️ 上游-IP與設計', 'IC設計-通訊'), '瑞昱': ('半導體', '⬆️ 上游-IP與設計', 'IC設計-網通'),
-                '聯詠': ('半導體', '⬆️ 上游-IP與設計', 'IC設計-驅動'), '群聯': ('半導體', '⬆️ 上游-IP與設計', 'IC設計-存儲'),
-                '台積': ('半導體', '↔️ 中游-製造', '晶圓代工'), '聯電': ('半導體', '↔️ 中游-製造', '晶圓代工'),
-                '弘塑': ('半導體', '↔️ 中游-設備', 'CoWoS 設備'), '辛耘': ('半導體', '↔️ 中游-設備', 'CoWoS 設備'),
-                '萬潤': ('半導體', '↔️ 中游-設備', '封測設備'), '家登': ('半導體', '↔️ 中游-設備', 'EUV載具'),
-                '日月光': ('半導體', '⬇️ 下游-封測', '封裝測試'), '京元電': ('半導體', '⬇️ 下游-封測', '晶圓測試'),
-                '旺矽': ('半導體', '⬇️ 下游-封測', '探針卡'), '穎崴': ('半導體', '⬇️ 下游-封測', '測試座'),
-                
-                # [通信網路]
-                '全新': ('通信網路', '⬆️ 上游-元件', 'PA 砷化鎵'), '穩懋': ('通信網路', '⬆️ 上游-元件', 'PA 代工'),
-                '波若威': ('通信網路', '↔️ 中游-光通訊', '光纖元件'), '華星光': ('通信網路', '↔️ 中游-光通訊', 'CPO 模組'),
-                '光聖': ('通信網路', '↔️ 中游-光通訊', '光被動元件'), '聯亞': ('通信網路', '↔️ 中游-光通訊', '雷射二極體'),
-                '智邦': ('通信網路', '⬇️ 下游-網通設備', '交換器'), '啟碁': ('通信網路', '⬇️ 下游-網通設備', '衛星/車用'),
-                '中磊': ('通信網路', '⬇️ 下游-網通設備', '寬頻設備'),
-
-                # [電腦周邊]
-                '台光電': ('電子零組件', '⬆️ 上游-材料', 'CCL 銅箔基板'), '台燿': ('電子零組件', '⬆️ 上游-材料', 'CCL 高頻'),
-                '金像電': ('電子零組件', '↔️ 中游-PCB', '伺服器板'), '健鼎': ('電子零組件', '↔️ 中游-PCB', 'HDI板'),
-                '奇鋐': ('電腦周邊', '↔️ 中游-散熱', '3D VC/水冷'), '雙鴻': ('電腦周邊', '↔️ 中游-散熱', '水冷板'),
-                '建準': ('電腦周邊', '↔️ 中游-散熱', '風扇'), '勤誠': ('電腦周邊', '↔️ 中游-機殼', '伺服器機殼'),
-                '川湖': ('電腦周邊', '↔️ 中游-機構', '導軌'), '廣達': ('電腦周邊', '⬇️ 下游-組裝', 'AI 伺服器'),
-                '緯創': ('電腦周邊', '⬇️ 下游-組裝', 'AI 伺服器'), '技嘉': ('電腦周邊', '⬇️ 下游-品牌', '主機板/Server'),
-                
-                # [綠能]
-                '世紀鋼': ('綠能環保', '⬆️ 上游-風電', '水下基礎'), '上緯': ('綠能環保', '⬆️ 上游-風電', '葉片材料'),
-                '華城': ('綠能環保', '↔️ 中游-重電', '變壓器'), '士電': ('綠能環保', '↔️ 中游-重電', '配電盤'),
-                '中興電': ('綠能環保', '↔️ 中游-重電', 'GIS 開關'), '亞力': ('綠能環保', '↔️ 中游-重電', '輸配電'),
-                '森崴': ('綠能環保', '⬇️ 下游-開發', '綠電開發'), '雲豹': ('綠能環保', '⬇️ 下游-開發', '儲能/太陽能'),
-
-                # [生技]
-                '藥華藥': ('生技醫療', '⬆️ 上游-新藥', '新藥研發'), '合一': ('生技醫療', '⬆️ 上游-新藥', '新藥研發'),
-                '保瑞': ('生技醫療', '↔️ 中游-製造', 'CDMO 代工'), '美時': ('生技醫療', '↔️ 中游-製造', '學名藥'),
-                '晶碩': ('生技醫療', '⬇️ 下游-醫材', '隱形眼鏡'), '大樹': ('生技醫療', '⬇️ 下游-通路', '藥局'),
-            }
+        # Tab 5: 產業風口地圖 (Titan V103: IC.TPEX 官方 30 大產業鏈)
+        # ==========================================
+        with tab5:
+            st.subheader("🌌 IC.TPEX 官方產業價值矩陣")
             
-            def classify(name):
-                for k, v in chain_map.items():
-                    if k in name: return v
-                # 模糊分類 (兜底)
-                if '電' in name or '科' in name: return ('其他電子', '一般電子', '電子零組件')
-                if '營' in name or '建' in name: return ('建材營造', '營造地產', '建設')
-                if '金' in name or '銀' in name: return ('金融保險', '金融', '金控/銀行')
-                if '長榮' in name or '陽明' in name: return ('航運業', '貨櫃航空', '運輸')
-                return ('其他產業', '未分類', '其他')
+            # --- 1. 核心數據處理 (官方 30 大分類引擎) ---
+            @st.cache_data(ttl=3600)
+            def get_tpex_data(raw_df):
+                # TPEx 官方 30 大產業分類標籤 (基準)
+                # 1.半導體 2.通信網路 3.電腦週邊 4.電子零組件 5.光電 6.電子通路 7.資訊服務 8.其他電子
+                # 9.生技醫療 10.紡織纖維 11.電機機械 12.電器電纜 13.化學工業 14.建材營造 15.航運業
+                # 16.觀光事業 17.金融業 18.貿易百貨 19.油電燃氣 20.文化創意 21.鋼鐵工業 22.橡膠工業
+                # 23.塑膠工業 24.汽車工業 25.食品工業 26.造紙工業 27.綠能環保 28.運動休閒 29.居家生活 30.其他
 
-            d = raw_df.copy()
-            d[['L1', 'L2', 'L3']] = d['name'].apply(lambda x: pd.Series(classify(x)))
-            
-            # 數值清洗 (Sanitization)
-            d['ma87'] = pd.to_numeric(d['ma87'], errors='coerce')
-            d['price'] = pd.to_numeric(d['stock_price_real'], errors='coerce')
-            # 若無 MA87，乖離率設為 0 (灰色)
-            d['bias'] = ((d['price'] - d['ma87']) / d['ma87'] * 100)
-            d['bias_clean'] = d['bias'].fillna(0).clip(-25, 25) # 限制顏色範圍
-            d['bias_label'] = d['bias'].apply(lambda x: f"{x:+.1f}%" if pd.notnull(x) else "N/A")
-            d['size_metric'] = d['price'].fillna(10) # 暫用股價當方塊大小
-            
-            return d
-
-        df_galaxy = get_tpex_data(full_data)
-
-        # --- 2. 繪製 Plotly 熱力圖 (手機互動版) ---
-        fig = px.treemap(
-            df_galaxy,
-            path=['L1', 'L2', 'L3', 'name'],
-            values='size_metric',
-            color='bias_clean',
-            color_continuous_scale=['#00FF00', '#262730', '#FF0000'], # 綠跌 -> 黑平 -> 紅漲
-            color_continuous_midpoint=0,
-            hover_data={'name':True, 'bias_label':True, 'L3':True, 'size_metric':False, 'bias_clean':False},
-            title='<b>🎯 資金流向熱力圖 (點擊方塊可放大)</b>'
-        )
-        fig.update_layout(margin=dict(t=30, l=10, r=10, b=10), height=500, font=dict(size=14))
-        fig.update_traces(
-            textinfo="label+text", 
-            texttemplate="%{label}<br>%{customdata[1]}", # 顯示名稱 + 乖離率
-            textposition="middle center"
-        )
-        st.plotly_chart(fig, use_container_width=True)
-
-        st.divider()
-
-        # --- 3. 全軍戰力排行榜 (TPEx 結構化分組) ---
-        st.subheader("🏆 全產業戰力排行榜 (Sector Roster)")
-        st.info("💡 點擊下方板塊，展開查看「上中下游」兵力部署")
-
-        # 計算各板塊平均強弱，並排序
-        sector_stats = df_galaxy.groupby('L1')['bias'].mean().sort_values(ascending=False)
-        
-        for sector, avg_bias in sector_stats.items():
-            # 找出該板塊所有股票
-            sector_df = df_galaxy[df_galaxy['L1'] == sector]
-            count = len(sector_df)
-            bulls = len(sector_df[sector_df['bias'] > 0])
-            
-            # 標題設計 (名次感)
-            header_color = "🔴" if avg_bias > 0 else "🟢"
-            header = f"{header_color} **{sector}** (均 {avg_bias:+.1f}%) | 強勢 {bulls}/{count} 檔"
-            
-            with st.expander(header):
-                # 核心：依照 L2 (上中下游) 分組顯示
-                # 為了順序好看，我們可以自定義排序 (上 -> 中 -> 下)
-                l2_groups = sector_df.groupby('L2')
-                # 簡單排序：字串排序 (上游 > 下游 > 中游... 中文排序不準，這裡直接遍歷)
-                
-                sorted_l2 = sorted(l2_groups.groups.keys(), key=lambda x: '上' in x if 0 else ('中' in x if 1 else 2)) # 簡單邏輯：上游優先
-
-                for l2 in sorted_l2:
-                    sub_df = l2_groups.get_group(l2).sort_values('bias', ascending=False)
-                    st.markdown(f"**{l2}**") # 顯示分組標題 (如 ⬆️ 上游-IP與設計)
+                # 精準對應字典 (手動定義精華版 - 擴充至 30 類)
+                chain_map = {
+                    # [1. 半導體]
+                    '世芯': ('半導體', '⬆️ 上游-IC設計', 'IP/ASIC'), '創意': ('半導體', '⬆️ 上游-IC設計', 'IP/ASIC'),
+                    '聯發科': ('半導體', '⬆️ 上游-IC設計', '手機SoC'), '瑞昱': ('半導體', '⬆️ 上游-IC設計', '網通IC'),
+                    '台積': ('半導體', '↔️ 中游-製造', '晶圓代工'), '聯電': ('半導體', '↔️ 中游-製造', '晶圓代工'),
+                    '弘塑': ('半導體', '↔️ 中游-設備', '濕製程'), '辛耘': ('半導體', '↔️ 中游-設備', 'CoWoS'),
+                    '萬潤': ('半導體', '↔️ 中游-設備', '封測設備'), '日月光': ('半導體', '⬇️ 下游-封測', '封裝'),
                     
-                    # 製作漂亮的表格或條列
-                    cols = st.columns(3) # 手機上分3欄比較擠，改用直列或2欄
-                    for idx, row in sub_df.iterrows():
-                        color = "red" if row['bias'] > 0 else "#00FF00"
-                        label = row['bias_label']
-                        # 格式： 3661 世芯 (+5.2%)
-                        st.markdown(f"<span style='color:{color}; font-weight:bold;'>{row['code']} {row['name']}</span> <span style='color:#aaa; font-size:0.9em;'>({label})</span>", unsafe_allow_html=True)
-                    st.markdown("---")
+                    # [2. 通信網路]
+                    '智邦': ('通信網路', '⬇️ 下游-網通設備', '交換器'), '啟碁': ('通信網路', '⬇️ 下游-網通設備', '衛星/車用'),
+                    '中磊': ('通信網路', '⬇️ 下游-網通設備', '寬頻'), '全新': ('通信網路', '⬆️ 上游-元件', 'PA砷化鎵'),
+                    '穩懋': ('通信網路', '⬆️ 上游-元件', 'PA代工'), '華星光': ('通信網路', '↔️ 中游-光通訊', 'CPO模組'),
+                    '波若威': ('通信網路', '↔️ 中游-光通訊', '光纖元件'), '聯亞': ('通信網路', '↔️ 中游-光通訊', '雷射二極體'),
+
+                    # [3. 電腦週邊]
+                    '廣達': ('電腦週邊', '⬇️ 下游-組裝', 'AI伺服器'), '緯創': ('電腦週邊', '⬇️ 下游-組裝', 'AI伺服器'),
+                    '技嘉': ('電腦週邊', '⬇️ 下游-品牌', '板卡/Server'), '微星': ('電腦週邊', '⬇️ 下游-品牌', '電競'),
+                    '奇鋐': ('電腦週邊', '↔️ 中游-散熱', '3D VC'), '雙鴻': ('電腦週邊', '↔️ 中游-散熱', '水冷板'),
+                    '勤誠': ('電腦週邊', '↔️ 中游-機殼', '伺服器機殼'), '川湖': ('電腦週邊', '↔️ 中游-機構', '導軌'),
+                    '樺漢': ('電腦週邊', '⬇️ 下游-工業電腦', 'IPC'), '研華': ('電腦週邊', '⬇️ 下游-工業電腦', 'IPC'),
+
+                    # [4. 電子零組件]
+                    '台光電': ('電子零組件', '⬆️ 上游-材料', 'CCL銅箔基板'), '台燿': ('電子零組件', '⬆️ 上游-材料', 'CCL高頻'),
+                    '金像電': ('電子零組件', '↔️ 中游-PCB', '伺服器板'), '健鼎': ('電子零組件', '↔️ 中游-PCB', 'HDI'),
+                    '欣興': ('電子零組件', '↔️ 中游-PCB', 'ABF載板'), '南電': ('電子零組件', '↔️ 中游-PCB', 'ABF載板'),
+                    '國巨': ('電子零組件', '↔️ 中游-被動元件', 'MLCC'), '華新科': ('電子零組件', '↔️ 中游-被動元件', 'MLCC'),
+                    '凡甲': ('電子零組件', '↔️ 中游-連接器', '車用/Server'), '嘉澤': ('電子零組件', '↔️ 中游-連接器', 'CPU Socket'),
+
+                    # [5. 光電]
+                    '大立光': ('光電', '⬆️ 上游-光學', '鏡頭'), '玉晶光': ('光電', '⬆️ 上游-光學', '鏡頭'),
+                    '亞光': ('光電', '⬆️ 上游-光學', '車載鏡頭'), '群創': ('光電', '↔️ 中游-面板', 'LCD'),
+                    '友達': ('光電', '↔️ 中游-面板', 'LCD'), '中光電': ('光電', '⬇️ 下游-背光', '背光模組'),
+
+                    # [9. 生技醫療]
+                    '藥華藥': ('生技醫療', '⬆️ 上游-新藥', '新藥研發'), '合一': ('生技醫療', '⬆️ 上游-新藥', '新藥研發'),
+                    '保瑞': ('生技醫療', '↔️ 中游-製造', 'CDMO'), '美時': ('生技醫療', '↔️ 中游-製造', '學名藥'),
+                    '晶碩': ('生技醫療', '⬇️ 下游-醫材', '隱形眼鏡'), '視陽': ('生技醫療', '⬇️ 下游-醫材', '隱形眼鏡'),
+                    '大樹': ('生技醫療', '⬇️ 下游-通路', '藥局'), '長佳智能': ('生技醫療', '⬆️ 上游-資訊', 'AI醫療'),
+
+                    # [11. 電機機械]
+                    '上銀': ('電機機械', '⬆️ 上游-傳動', '滾珠螺桿'), '亞德客': ('電機機械', '⬆️ 上游-氣動', '氣動元件'),
+                    '東元': ('電機機械', '↔️ 中游-馬達', '工業馬達'), '中砂': ('電機機械', '⬆️ 上游-耗材', '鑽石碟'),
+
+                    # [14. 建材營造]
+                    '華固': ('建材營造', '⬇️ 下游-建設', '住宅商辦'), '長虹': ('建材營造', '⬇️ 下游-建設', '住宅商辦'),
+                    '興富發': ('建材營造', '⬇️ 下游-建設', '住宅'), '遠雄': ('建材營造', '⬇️ 下游-建設', '廠辦'),
+                    '國產': ('建材營造', '⬆️ 上游-材料', '預拌混凝土'),
+
+                    # [15. 航運業]
+                    '長榮': ('航運業', '↔️ 中游-海運', '貨櫃'), '陽明': ('航運業', '↔️ 中游-海運', '貨櫃'),
+                    '萬海': ('航運業', '↔️ 中游-海運', '貨櫃'), '長榮航': ('航運業', '↔️ 中游-空運', '航空'),
+                    '華航': ('航運業', '↔️ 中游-空運', '航空'), '星宇': ('航運業', '↔️ 中游-空運', '航空'),
+                    '慧洋': ('航運業', '↔️ 中游-散裝', '散裝航運'), '裕民': ('航運業', '↔️ 中游-散裝', '散裝航運'),
+
+                    # [24. 汽車工業]
+                    '東陽': ('汽車工業', '↔️ 中游-零組件', 'AM保險桿'), '堤維西': ('汽車工業', '↔️ 中游-零組件', 'AM車燈'),
+                    '帝寶': ('汽車工業', '↔️ 中游-零組件', 'AM車燈'), '裕隆': ('汽車工業', '⬇️ 下游-整車', '品牌製造'),
+                    '中華': ('汽車工業', '⬇️ 下游-整車', '商用車'), '和泰車': ('汽車工業', '⬇️ 下游-代理', 'TOYOTA'),
+
+                    # [27. 綠能環保 (含重電)]
+                    '華城': ('綠能環保', '↔️ 中游-重電', '變壓器'), '士電': ('綠能環保', '↔️ 中游-重電', '配電盤'),
+                    '中興電': ('綠能環保', '↔️ 中游-重電', 'GIS開關'), '亞力': ('綠能環保', '↔️ 中游-重電', '輸配電'),
+                    '世紀鋼': ('綠能環保', '⬆️ 上游-風電', '水下基礎'), '森崴': ('綠能環保', '⬇️ 下游-能源', '綠電開發'),
+                    '雲豹': ('綠能環保', '⬇️ 下游-能源', '儲能/太陽能'),
+
+                    # [30. 其他 (含軍工)]
+                    '漢翔': ('其他', '↔️ 中游-航太', '軍工/民航'), '龍德': ('其他', '↔️ 中游-造船', '軍艦'),
+                }
+                
+                def classify(name):
+                    # 1. 字典精準匹配
+                    for k, v in chain_map.items():
+                        if k in name: return v
+                    
+                    # 2. 關鍵字模糊歸類 (對標官方 30 大)
+                    # 半導體
+                    if any(x in name for x in ['電', '科', '矽', '晶', '半']): 
+                        if '光' in name: return ('光電', '一般光電', '光電')
+                        return ('半導體', '其他半導體', '半導體')
+                    # 通信網路
+                    if any(x in name for x in ['網', '通', '訊']): return ('通信網路', '網通設備', '通信')
+                    # 電腦週邊
+                    if any(x in name for x in ['腦', '機', '資']): return ('電腦週邊', '系統', '電腦')
+                    # 電子零組件
+                    if any(x in name for x in ['板', '線', '器', '零']): return ('電子零組件', '被動/連接', '零組件')
+                    # 生技醫療
+                    if any(x in name for x in ['生', '醫', '藥']): return ('生技醫療', '生技', '醫療')
+                    # 綠能環保
+                    if any(x in name for x in ['綠', '能', '源', '電', '華城', '重電']): return ('綠能環保', '能源', '綠能')
+                    # 航運
+                    if any(x in name for x in ['航', '運', '船']): return ('航運業', '運輸', '航運')
+                    # 建材營造
+                    if any(x in name for x in ['營', '建', '地']): return ('建材營造', '建設', '營造')
+                    # 金融
+                    if any(x in name for x in ['金', '銀', '保']): return ('金融業', '金融', '金控')
+                    # 汽車
+                    if any(x in name for x in ['車', '汽']): return ('汽車工業', '零組件', '汽車')
+                    
+                    return ('其他', '未分類', '其他')
+
+                d = raw_df.copy()
+                d[['L1', 'L2', 'L3']] = d['name'].apply(lambda x: pd.Series(classify(x)))
+                
+                # 數值清洗 (Sanitization) - 照抄原版邏輯
+                d['ma87'] = pd.to_numeric(d['ma87'], errors='coerce')
+                d['price'] = pd.to_numeric(d['stock_price_real'], errors='coerce')
+                # 若無 MA87，乖離率設為 0 (灰色)
+                d['bias'] = ((d['price'] - d['ma87']) / d['ma87'] * 100)
+                d['bias_clean'] = d['bias'].fillna(0).clip(-25, 25) # 限制顏色範圍
+                d['bias_label'] = d['bias'].apply(lambda x: f"{x:+.1f}%" if pd.notnull(x) else "N/A")
+                d['size_metric'] = d['price'].fillna(10) # 暫用股價當方塊大小
+                
+                return d
+
+            df_galaxy = get_tpex_data(full_data)
+
+            # --- 2. 繪製 Plotly 熱力圖 (照抄原版 UI) ---
+            fig = px.treemap(
+                df_galaxy,
+                path=['L1', 'L2', 'L3', 'name'],
+                values='size_metric',
+                color='bias_clean',
+                color_continuous_scale=['#00FF00', '#262730', '#FF0000'], # 綠跌 -> 黑平 -> 紅漲
+                color_continuous_midpoint=0,
+                hover_data={'name':True, 'bias_label':True, 'L3':True, 'size_metric':False, 'bias_clean':False},
+                title='<b>🎯 資金流向熱力圖 (IC.TPEX 官方分類版)</b>'
+            )
+            fig.update_layout(margin=dict(t=30, l=10, r=10, b=10), height=500, font=dict(size=14))
+            fig.update_traces(
+                textinfo="label+text", 
+                texttemplate="%{label}<br>%{customdata[1]}", # 顯示名稱 + 乖離率
+                textposition="middle center"
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+            st.divider()
+
+            # --- 3. 全軍戰力排行榜 (TPEx 30大戰區 結構化分組) ---
+            st.subheader("🏆 全產業戰力排行榜 (Sector Roster)")
+            st.info("💡 點擊下方官方產業板塊，展開查看「上中下游」兵力部署")
+
+            # 計算各板塊平均強弱，並排序
+            sector_stats = df_galaxy.groupby('L1')['bias'].mean().sort_values(ascending=False)
+            
+            # 遍歷排序後的板塊
+            for sector, avg_bias in sector_stats.items():
+                # 找出該板塊所有股票
+                sector_df = df_galaxy[df_galaxy['L1'] == sector]
+                count = len(sector_df)
+                if count == 0: continue # 跳過無兵力的戰區
+
+                bulls = len(sector_df[sector_df['bias'] > 0])
+                
+                # 標題設計 (名次感)
+                header_color = "🔴" if avg_bias > 0 else "🟢"
+                header = f"{header_color} **{sector}** (均 {avg_bias:+.1f}%) | 強勢 {bulls}/{count} 檔"
+                
+                with st.expander(header):
+                    # 核心：依照 L2 (上中下游) 分組顯示
+                    l2_groups = sector_df.groupby('L2')
+                    
+                    # 簡單排序：字串排序 (上游 > 下游 > 中游... 中文排序不準，這裡直接遍歷 keys)
+                    # 為了符合人類直覺，我們嘗試把 "上游" 排前面
+                    sorted_l2 = sorted(l2_groups.groups.keys(), key=lambda x: 0 if '上' in str(x) else (1 if '中' in str(x) else 2))
+
+                    for l2 in sorted_l2:
+                        sub_df = l2_groups.get_group(l2).sort_values('bias', ascending=False)
+                        st.markdown(f"**{l2}**") # 顯示分組標題 (如 ⬆️ 上游-IC設計)
+                        
+                        # 製作漂亮的表格或條列 (照抄原版)
+                        cols = st.columns(3) 
+                        for idx, row in sub_df.iterrows():
+                            color = "red" if row['bias'] > 0 else "#00FF00"
+                            label = row['bias_label']
+                            # 格式： 3661 世芯 (+5.2%)
+                            st.markdown(f"<span style='color:{color}; font-weight:bold;'>{row['code']} {row['name']}</span> <span style='color:#aaa; font-size:0.9em;'>({label})</span>", unsafe_allow_html=True)
+                        st.markdown("---")
 # --- Window 10: 資金配置試算 (Position Sizing) ---
 st.header("🔟 資金配置試算 (Position Sizing)")
 
@@ -1652,176 +1712,196 @@ if w17_in:
         ])
         
         # ==========================================
-        # Tab 1: 量子路徑預演 (Titan V84: Scenario Inspector)
+        # Tab 1: 量子路徑預演 (Titan V85: Quantum Path Prediction - Mobile Commander)
         # ==========================================
         with t1:
+            # [UI優化] 標題加大
             st.markdown("""
-            <h3 style='color: #FFA500; margin-bottom: 0px;'>🔮 殿堂級全息預演</h3>
-            <p style='color: #888; margin-top: 0px;'>Titan V84 Quantum Path</p>
+            <h3 style='color: #FFA500; margin-bottom: 0px;'>🔮 殿堂級全息戰略預演</h3>
+            <p style='color: #888; margin-top: 0px; font-size: 14px;'>Holographic Strategy V85</p>
             """, unsafe_allow_html=True)
-
-            # --- 1. 數據與基礎計算 ---
-            future_days = 20 # 預設
-            last_date = sdf.index[-1]
-            future_dates = [last_date + pd.Timedelta(days=i+1) for i in range(120)] # 預算長一點備用
             
-            # 計算波動率 (ATR 概念)
-            hist_volatility = sdf['Close'].pct_change().std() * 100
-            current_vol = max(1.5, hist_volatility)
-            
-            # 取得均線與斜率
-            ma87_curr = sdf['MA87'].iloc[-1]
-            ma284_curr = sdf['MA284'].iloc[-1]
-            # 87MA 斜率 (近10天)
-            slope_87 = (sdf['MA87'].iloc[-1] - sdf['MA87'].iloc[-10]) / 10
-            # 乖離率
-            bias_87_val = cp - ma87_curr 
+            # --- 1. 參數設定與運算核心 (Smart Calc) ---
+            # 自動計算波動率 (ATR 概念模擬)
+            hist_volatility = sdf['Close'].pct_change().std() * 100 
+            current_vol = max(1.5, hist_volatility) 
 
-            # --- 2. 戰略參數與劇本檢視器 (Scenario Inspector) ---
-            with st.expander("⚙️ 戰略參數與劇本設定 (點擊展開)", expanded=True):
+            # [UI優化] 參數區改為輸入框 (手機好點選)
+            with st.expander("⚙️ 戰略參數與劇本檢視 (點擊展開)", expanded=False):
+                st.caption("🖐️ **手動輸入區**")
                 c1, c2 = st.columns(2)
                 with c1:
-                    sim_days_input = st.number_input("預演天數", 5, 120, 20, step=5)
+                    # [修正] Slider -> Number Input
+                    sim_days = st.number_input("預演天數", min_value=10, max_value=120, value=20, step=5)
                 with c2:
-                    momentum_adj = st.number_input("動能修正 (%)", -10.0, 10.0, 0.0, step=0.5)
-
-                st.markdown("---")
-                st.caption("📂 **全息劇本庫 (點擊展開可預覽，勾選以投影)**")
-
-                # === 劇本 A: 慣性震盪 (87MA Magnetic) ===
-                # 邏輯：沿著 87MA 軌道前進，保持目前乖離
-                path_a = []
-                curr_87 = ma87_curr
-                for i in range(sim_days_input):
-                    curr_87 += slope_87 # 87MA 繼續延伸
-                    # 股價 = 延伸的87MA + (目前的乖離值 * 動能衰減或維持) + 用戶動能
-                    # 這裡設定為：乖離稍微收斂 (回歸均值特性)
-                    proj_price = curr_87 + bias_87_val + (cp * momentum_adj/100 * (i/sim_days_input))
-                    path_a.append(proj_price)
+                    # [修正] 保留輸入框
+                    momentum_input = st.number_input("假設動能 (%)", -20.0, 20.0, 0.0, step=0.5)
                 
-                check_a = st.checkbox("✅ 投影劇本 A：慣性震盪 (沿 87MA 軌道)", value=True)
-                with st.expander("🔎 查看劇本 A 詳情 (Inertia)", expanded=False):
-                    st.write(f"**戰略邏輯**：假設股價維持與季線的乖離慣性 ({bias_87_val:.1f}元)，並隨季線斜率 ({slope_87:.2f}/天) 前進。")
-                    st.write(f"**目標價 (T+{sim_days_input})**：{path_a[-1]:.1f} 元")
-                    # Mini Chart A
-                    df_a = pd.DataFrame({'Date': future_dates[:sim_days_input], 'Price': path_a})
-                    chart_a = alt.Chart(df_a).mark_line(color='white').encode(x='Date:T', y=alt.Y('Price', scale=alt.Scale(zero=False))).properties(height=200, width=300)
-                    st.altair_chart(chart_a)
+                st.markdown("---")
+                
+                # [新增] 劇本分流檢視 (Scenario Inspector) - 點開才看，不佔位
+                st.caption("📂 **分流劇本檢視 (點擊展開詳情)**")
+                
+                # 劇本 A
+                with st.expander("📉 劇本 A：慣性震盪 (Inertia)", expanded=False):
+                    st.write("**戰略邏輯**：沿著目前趨勢與季線乖離前進。")
+                    # (此處可視需要加入迷你圖，為保持手機流暢，文字說明為主)
+                
+                # 劇本 B
+                with st.expander("🚀 劇本 B：波動率噴出 (Bull)", expanded=False):
+                    st.write(f"**戰略邏輯**：多頭動能轉強，挑戰波動率上緣 (+{current_vol:.1f}%)。")
+                
+                # 劇本 C
+                with st.expander("🐻 劇本 C：地心引力回測 (Bear)", expanded=False):
+                    st.write(f"**戰略邏輯**：空頭襲擊，回測波動率下緣 (-{current_vol:.1f}%)。")
 
-                # === 劇本 B: 樂觀噴出 (Bull Volatility) ===
-                # 邏輯：沿著波動率上緣噴出
-                path_b = []
-                for i in range(sim_days_input):
-                    # 波動率擴張模型
-                    vol_factor = (current_vol/100) * np.sqrt(i+1) * 1.5 # 1.5倍標準差
-                    proj_price = cp * (1 + vol_factor + (momentum_adj/100))
-                    path_b.append(proj_price)
-
-                check_b = st.checkbox(f"✅ 投影劇本 B：樂觀噴出 (波動率 +{current_vol:.1f}%)", value=False)
-                with st.expander("🔎 查看劇本 B 詳情 (Bull)", expanded=False):
-                    st.write("**戰略邏輯**：多頭動能轉強，沿著布林通道/波動率上緣進行攻擊。")
-                    st.write(f"**目標價 (T+{sim_days_input})**：{path_b[-1]:.1f} 元")
-                    # Mini Chart B
-                    df_b = pd.DataFrame({'Date': future_dates[:sim_days_input], 'Price': path_b})
-                    chart_b = alt.Chart(df_b).mark_line(color='#00FF00').encode(x='Date:T', y=alt.Y('Price', scale=alt.Scale(zero=False))).properties(height=200, width=300)
-                    st.altair_chart(chart_b)
-
-                # === 劇本 C: 悲觀回測 (Gravity Pull) ===
-                # 邏輯：被年線吸回去 (如果年線在下方)，或波動率下殺
-                path_c = []
-                target_bear = ma284_curr if ma284_curr < cp else cp * (1 - current_vol/100) # 若年線在上方，則改測波動下緣
-                for i in range(sim_days_input):
-                    # 線性回歸到目標價
-                    progress = (i+1) / sim_days_input
-                    proj_price = cp * (1 - progress) + target_bear * progress
-                    path_c.append(proj_price)
-
-                check_c = st.checkbox(f"✅ 投影劇本 C：悲觀回測 (回測 {'年線' if ma284_curr < cp else '支撐'})", value=False)
-                with st.expander("🔎 查看劇本 C 詳情 (Bear)", expanded=False):
-                    st.write(f"**戰略邏輯**：多頭棄守，股價受地心引力影響，回測 {target_bear:.1f} 元支撐。")
-                    st.write(f"**目標價 (T+{sim_days_input})**：{path_c[-1]:.1f} 元")
-                    # Mini Chart C
-                    df_c = pd.DataFrame({'Date': future_dates[:sim_days_input], 'Price': path_c})
-                    chart_c = alt.Chart(df_c).mark_line(color='#FF4B4B').encode(x='Date:T', y=alt.Y('Price', scale=alt.Scale(zero=False))).properties(height=200, width=300)
-                    st.altair_chart(chart_c)
+            # 準備數據
+            future_days = int(sim_days)
+            last_date = sdf.index[-1]
+            future_dates = [last_date + pd.Timedelta(days=i+1) for i in range(future_days)]
             
-            # --- 3. 🤖 G-Score 量化戰報 (Commander's Briefing) ---
-            # 評分邏輯
+            # --- 2. 建立「五維全息劇本」 (保留原版運算邏輯) ---
+            
+            # 劇本 A: 慣性 (Inertia) - 跟隨目前 10MA 斜率
+            slope_10 = (sdf['Close'].iloc[-1] - sdf['Close'].iloc[-10]) / 10
+            path_inertia = [cp + slope_10 * (i+1) for i in range(future_days)]
+            
+            # 劇本 B: 波動率上緣 (Bull Case)
+            path_bull = [cp * (1 + (current_vol/100) * np.sqrt(i+1)) for i in range(future_days)]
+            
+            # 劇本 C: 波動率下緣 (Bear Case)
+            path_bear = [cp * (1 - (current_vol/100) * np.sqrt(i+1)) for i in range(future_days)]
+
+            # 選擇主要顯示路徑 (根據用戶輸入微調 - 這是主圖畫的那條白線)
+            sim_prices = []
+            curr_sim = cp
+            for i in range(future_days):
+                # 基礎波動 + 用戶輸入動能
+                drift = momentum_input / 100
+                curr_sim = curr_sim * (1 + drift)
+                sim_prices.append(curr_sim)
+            
+            # 合併數據計算均線
+            future_series = pd.Series(sim_prices, index=future_dates)
+            combined_series = pd.concat([sdf['Close'], future_series])
+            
+            # 計算均線
+            combined_ma87 = combined_series.rolling(87).mean()
+            combined_ma284 = combined_series.rolling(284).mean()
+            
+            # 提取扣抵值 (Ghost Lines)
+            start_idx = len(sdf)
+            all_closes = combined_series.values
+            deduct_87 = [all_closes[start_idx + i - 87] if (start_idx + i - 87) >= 0 else np.nan for i in range(future_days)]
+            deduct_284 = [all_closes[start_idx + i - 284] if (start_idx + i - 284) >= 0 else np.nan for i in range(future_days)]
+            
+            # 建立 DataFrame
+            f_df = pd.DataFrame({
+                'Date': future_dates,
+                'Sim_Price': sim_prices,
+                'Bull_Bound': path_bull, 
+                'Bear_Bound': path_bear, 
+                'MA87': combined_ma87.loc[future_dates].values,
+                'MA284': combined_ma284.loc[future_dates].values,
+                'Deduct_87': deduct_87,
+                'Deduct_284': deduct_284
+            })
+
+            # --- 3. 🤖 G-Score 量化評分 (保留原版邏輯) ---
             score = 0
+            ma87_curr = combined_ma87.iloc[-future_days-1]
+            ma284_curr = combined_ma284.iloc[-future_days-1]
             if cp > ma87_curr: score += 15
             if cp > ma284_curr: score += 15
-            if slope_87 > 0: score += 20
+            if cp > sdf['Close'].iloc[-20:].mean(): score += 20
             bias_diff = abs(ma87_curr - ma284_curr) / ma284_curr
-            is_squeeze = bias_diff < 0.02
-            if ma87_curr > ma284_curr: score += 30
+            is_squeeze = bias_diff < 0.015 
+            if ma87_curr > ma284_curr: score += 30 
+            future_deduct_87_avg = np.mean(deduct_87[:20])
+            if future_deduct_87_avg < cp: score += 20 
             
-            # 顏色定義
-            if score >= 80: 
-                g_status = "🔥 多頭坦途"; g_color = "#00FF00"; g_bg = "rgba(0,255,0,0.1)"
-            elif score >= 50: 
-                g_status = "⚠️ 區間震盪"; g_color = "#FFA500"; g_bg = "rgba(255,165,0,0.1)"
-            else: 
-                g_status = "🐻 空頭承壓"; g_color = "#FF4B4B"; g_bg = "rgba(255,75,75,0.1)"
+            # 狀態定義
+            if score >= 80: g_status = "🔥 多頭坦途 (Clear Sky)"; g_color = "#00FF00"
+            elif score >= 50: g_status = "⚠️ 區間震盪 (Range Bound)"; g_color = "#FFA500"
+            else: g_status = "🐻 空頭承壓 (Bearish Pressure)"; g_color = "#FF4B4B"
+
+            # --- 4. 📱 總司令戰報 (Commander's Briefing) ---
+            # [UI優化] 字體暴力放大 + 結構化顯示
+            
+            fib_high = max(path_bull)
+            fib_low = min(path_bear)
+            fib_0618 = fib_low + (fib_high - fib_low) * 0.618
+            
+            squeeze_msg = ""
+            if is_squeeze:
+                squeeze_msg = f"🌪️ <b>螺旋絞殺 (Squeeze)</b>：乖離僅 <b>{bias_diff*100:.2f}%</b>，變盤在即。"
+            else:
+                squeeze_msg = "🚀 <b>發散攻擊</b>" if ma87_curr > ma284_curr else "📉 <b>空頭壓制</b>"
 
             st.markdown(f"""
-            <div style="background-color:#262730; padding:15px; border-radius:10px; border:1px solid #444; margin-bottom:15px;">
+            <div style="background-color:#1E1E1E; padding:15px; border-radius:10px; border: 1px solid #444; margin-bottom: 20px;">
                 <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <span style="font-size:18px; color:#ddd;">G-Score 量化總評</span>
+                    <span style="font-size:18px; color:#ddd;">📊 G-Score 總評</span>
                     <span style="font-size:32px; font-weight:bold; color:{g_color};">{score}</span>
                 </div>
-                <div style="background-color:{g_bg}; padding:5px 10px; border-radius:5px; margin-top:5px; display:inline-block;">
-                    <span style="font-size:18px; font-weight:bold; color:{g_color};">{g_status}</span>
+                <div style="margin-top:5px; font-size:20px; font-weight:bold; color:{g_color};">
+                    {g_status}
                 </div>
-                <div style="margin-top:10px; font-size:16px; color:#ccc;">
-                    <b>季線狀態</b>：{slope_87:.2f}/天 ({'上揚' if slope_87>0 else '下彎'})<br>
-                    <b>雙線關係</b>：{f'🌪️ 糾纏 (乖離 {bias_diff*100:.1f}%)' if is_squeeze else '🚀 發散' if ma87_curr>ma284_curr else '📉 蓋頭'}
+                <div style="margin-top:5px; font-size:16px; color:#ccc;">
+                    指令：<b>{'積極操作' if score>70 else '觀望/區間' if score>40 else '保守防禦'}</b>
+                </div>
+                
+                <hr style="border-top: 1px solid #555; margin: 15px 0;">
+                
+                <div style="font-size:18px; color:#4db8ff; font-weight:bold; margin-bottom:10px;">⚔️ 雙線糾纏場</div>
+                <div style="font-size:16px; color:#ddd; line-height:1.6;">
+                    {squeeze_msg}<br>
+                    • <b>87MA(季)</b>：{ma87_curr:.1f} (扣抵 {deduct_87[0]:.1f})<br>
+                    • <b>284MA(年)</b>：{ma284_curr:.1f} (扣抵 {deduct_284[0]:.1f})
+                </div>
+
+                <hr style="border-top: 1px solid #555; margin: 15px 0;">
+                
+                <div style="font-size:18px; color:#98FB98; font-weight:bold; margin-bottom:10px;">🔮 五維全息劇本</div>
+                <div style="font-size:16px; color:#ccc; line-height:1.6;">
+                    關鍵窗：<b>{(last_date + pd.Timedelta(days=13)).strftime('%m/%d')}</b><br>
+                    • <b>慣性 A</b>：{fib_low:.1f} ~ {fib_high:.1f} 震盪<br>
+                    • <b>破底 B</b>：測 {fib_0618:.1f} 不破翻<br>
+                    • <b>風險 C</b>：破 {min(deduct_87[:5]):.1f} 蓋頭
                 </div>
             </div>
             """, unsafe_allow_html=True)
-
-            # --- 4. 主圖表繪製 (Main Battlefield) ---
-            # 準備均線數據 (未來延伸部分用簡單線性預測，僅供背景參考)
-            # 這裡為了乾淨，主圖只畫歷史均線 + 用戶選擇的劇本線
             
-            # A. 基礎底圖 (歷史 K 線)
+            # --- 5. 視覺化 (保留原版 Altair 波動率機率錐) ---
+            # [UI優化] 加上 properties(height=450) 確保手機滿版
+            
+            base = alt.Chart(f_df).encode(x=alt.X('Date:T', axis=alt.Axis(labelFontSize=12)))
+            
+            cone = base.mark_area(opacity=0.2, color='gray').encode(
+                y='Bear_Bound:Q', y2='Bull_Bound:Q'
+            )
+            
+            line_sim = base.mark_line(color='white', strokeDash=[4,2], strokeWidth=2).encode(y='Sim_Price')
+            line_87 = base.mark_line(color='orange', strokeWidth=3).encode(y='MA87')
+            line_284 = base.mark_line(color='#00bfff', strokeWidth=3).encode(y='MA284')
+            
+            ghost_87 = base.mark_line(color='red', strokeDash=[1,1], opacity=0.5).encode(y='Deduct_87')
+            ghost_284 = base.mark_line(color='blue', strokeDash=[1,1], opacity=0.3).encode(y='Deduct_284')
+            
             hist_df = sdf.iloc[-60:].reset_index()
-            base = alt.Chart(hist_df).encode(x=alt.X('Date:T', axis=alt.Axis(format='%m/%d', labelFontSize=12)))
-            
-            candle = base.mark_rule().encode(y='Low', y2='High') + \
-                     base.mark_bar().encode(y='Open', y2='Close', 
+            base_hist = alt.Chart(hist_df).encode(x='Date:T')
+            candle = base_hist.mark_rule().encode(y='Low', y2='High') + \
+                     base_hist.mark_bar().encode(y='Open', y2='Close', 
                      color=alt.condition("datum.Open <= datum.Close", alt.value("#FF4B4B"), alt.value("#00AA00")))
-            
-            line_87 = base.mark_line(color='orange', strokeWidth=2).encode(y='MA87')
-            line_284 = base.mark_line(color='#00bfff', strokeWidth=2).encode(y='MA284')
-            
-            layers = [candle, line_87, line_284]
 
-            # B. 投影劇本 (根據 Checkbox)
-            if check_a:
-                df_proj_a = pd.DataFrame({'Date': future_dates[:sim_days_input], 'Price': path_a})
-                l_a = alt.Chart(df_proj_a).mark_line(color='white', strokeDash=[4,4], strokeWidth=3).encode(x='Date:T', y='Price')
-                layers.append(l_a)
-            
-            if check_b:
-                df_proj_b = pd.DataFrame({'Date': future_dates[:sim_days_input], 'Price': path_b})
-                l_b = alt.Chart(df_proj_b).mark_line(color='#00FF00', strokeDash=[2,2], strokeWidth=3).encode(x='Date:T', y='Price')
-                layers.append(l_b)
-                
-            if check_c:
-                df_proj_c = pd.DataFrame({'Date': future_dates[:sim_days_input], 'Price': path_c})
-                l_c = alt.Chart(df_proj_c).mark_line(color='#FF4B4B', strokeDash=[2,2], strokeWidth=3).encode(x='Date:T', y='Price')
-                layers.append(l_c)
-
-            # C. 組合與手機優化
-            chart = alt.layer(*layers).properties(
-                height=400, # 正方形構圖
-                title="量子戰略主圖 (Quantum Battlefield)"
+            chart = (cone + candle + line_sim + line_87 + line_284 + ghost_87 + ghost_284).properties(
+                height=450, # 正方形構圖
+                title="量子路徑預演 (手機戰情版)"
             ).configure_axis(
-                grid=False,
                 labelFontSize=14,
                 titleFontSize=16
             ).interactive()
-
+            
             st.altair_chart(chart, use_container_width=True)
         with t2: # 亞當
             adf = macro.calculate_adam_projection(sdf, 20)
