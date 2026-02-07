@@ -41,9 +41,7 @@ def load_system():
 
 kb, macro, strategy, intel, calendar, backtester = load_system()
 
-st.set_page_config(page_title="Titan SOP V78.2", layout="wide", page_icon="🏛️")
-st.title("🏛️ Titan SOP 全自動戰情室 (V99.9 天神)")
-
+# --- 效能補丁: 120 分鐘戰術緩存 ---
 @st.cache_data(ttl=7200)
 def get_macro_data(_macro, _df):
     """快取宏觀風控數據"""
@@ -53,6 +51,123 @@ def get_macro_data(_macro, _df):
 def get_scan_result(_strat, _df):
     """快取策略掃描結果"""
     return _strat.scan_entire_portfolio(_df)
+
+@st.cache_data(ttl=7200)
+def run_stress_test(portfolio_text):
+    """
+    執行全球黑天鵝壓力測試並緩存結果。
+    13F Institutional Level Logic.
+    """
+    # 1. 解析輸入
+    lines = [line.strip() for line in portfolio_text.split('\n') if line.strip()]
+    flat_lines = []
+    for line in lines:
+        flat_lines.extend(item.strip() for item in line.split('|') if item.strip())
+
+    if not flat_lines:
+        return pd.DataFrame(), {}
+
+    portfolio = []
+    for item in flat_lines:
+        parts = [p.strip() for p in item.split(';')]
+        if len(parts) == 2 and parts[1]:
+            try:
+                portfolio.append({'ticker': parts[0].upper(), 'shares': float(parts[1])})
+            except ValueError:
+                st.warning(f"跳過無效項目: {item}")
+                continue
+    
+    if not portfolio:
+        return pd.DataFrame(), {}
+
+    # 2. 下載基準與匯率數據
+    try:
+        benchmarks_data = yf.download(['^TWII', '^GSPC', 'USDTWD=X'], period="1y", progress=False)
+        if benchmarks_data.empty:
+            return pd.DataFrame(), {"error": "無法下載市場基準數據 (^TWII, ^GSPC)。"}
+        twd_fx_rate = benchmarks_data['Close']['USDTWD=X'].iloc[-1]
+    except Exception as e:
+        return pd.DataFrame(), {"error": f"下載市場數據失敗: {e}"}
+
+    # 3. 處理每個資產
+    tickers_to_download = [p['ticker'] for p in portfolio if p['ticker'] != 'CASH']
+    asset_data = yf.download(tickers_to_download, period="1y", progress=False)['Close']
+    
+    results = []
+    for asset in portfolio:
+        ticker = asset['ticker']
+        shares = asset['shares']
+        
+        if ticker == 'CASH':
+            results.append({
+                'ticker': 'CASH', 'shares': shares, 'price': 1.0, 'value_twd': shares,
+                'type': '現金', 'beta': 0.0, 'benchmark': 'N/A'
+            })
+            continue
+
+        # 資產識別
+        is_tw_stock = ticker.endswith(('.TW', '.TWO'))
+        asset_type = "台股" if is_tw_stock else "美股"
+        benchmark_ticker = '^TWII' if is_tw_stock else '^GSPC'
+        
+        try:
+            price = asset_data[ticker].iloc[-1] if isinstance(asset_data, pd.DataFrame) else asset_data.iloc[-1]
+            if pd.isna(price):
+                st.error(f"無法獲取 {ticker} 的價格數據，已跳過。")
+                continue
+        except (KeyError, IndexError):
+            st.error(f"查無代號 {ticker} 的數據，已跳過。")
+            continue
+
+        value_native = price * shares
+        value_twd = value_native * twd_fx_rate if not is_tw_stock else value_native
+
+        # 計算 Beta
+        asset_returns = asset_data[ticker].pct_change().dropna()
+        benchmark_returns = benchmarks_data['Close'][benchmark_ticker].pct_change().dropna()
+        common_dates = asset_returns.index.intersection(benchmark_returns.index)
+        
+        if len(common_dates) < 30:
+            beta = 1.0 # 資料不足時，假設 Beta 為 1
+        else:
+            cov_matrix = np.cov(asset_returns[common_dates], benchmark_returns[common_dates])
+            beta = cov_matrix[0, 1] / cov_matrix[1, 1]
+
+        results.append({
+            'ticker': ticker, 'shares': shares, 'price': price, 'value_twd': value_twd,
+            'type': asset_type, 'beta': beta, 'benchmark': benchmark_ticker
+        })
+
+    if not results:
+        return pd.DataFrame(), {}
+
+    df = pd.DataFrame(results)
+
+    # 4. 執行壓力測試
+    scenarios = {
+        '回檔 (-5%)': -0.05,
+        '修正 (-10%)': -0.10,
+        '技術熊市 (-20%)': -0.20,
+        '金融海嘯 (-30%)': -0.30
+    }
+    
+    # 匯率風險模型：假設市場每跌 10%，台幣貶值 2.5% (USDTWD 上升)
+    fx_shock_multiplier = -0.25
+
+    for name, shock in scenarios.items():
+        pnl_col = f'損益_{name}'
+        df[pnl_col] = df['beta'] * shock * df['value_twd']
+        
+        # 對美股部位計入匯兌收益
+        fx_impact = shock * fx_shock_multiplier
+        us_mask = df['type'] == '美股'
+        df.loc[us_mask, pnl_col] += df.loc[us_mask, 'value_twd'] * fx_impact
+
+    return df, {'total_value': df['value_twd'].sum()}
+
+
+st.set_page_config(page_title="Titan SOP V78.2", layout="wide", page_icon="🏛️")
+st.title("🏛️ Titan SOP 全自動戰情室 (V99.9 天神)")
 
 # --- Sidebar ---
 with st.sidebar:
@@ -394,12 +509,435 @@ def render_leader_dashboard(window_title: str, session_state_key: str, fetch_fun
     else:
         st.info("點擊上方按鈕以啟動掃描。")
 
+# --- 效能補丁: Tab 3 局部刷新 ---
+@st.fragment
+def render_sniper_tab():
+    """Renders the Sniper Tab content, isolated for performance."""
+    with st.expander("3.1 萬用個股狙擊雷達 (Universal Sniper)", expanded=True):
+        import numpy as np
+        import altair as alt
+
+        st.info("🌍 全球戰情模式：支援台股 (2330)、美股 (TSLA, PLTR)、加密貨幣BTC-USD。已啟動雙軌扣抵預演系統。")
+
+        w17_in = st.text_input("輸入代號或股名", value="2330", key="w17_final_v102").strip()
+
+        if w17_in:
+            try:
+                from macro_risk import STOCK_METADATA
+                N2T = {v['name'].strip(): k for k, v in STOCK_METADATA.items()}
+                if w17_in in N2T: w17_in = N2T[w17_in]
+            except: pass
+            
+            cands = [w17_in]
+            if w17_in.isdigit(): cands = [f"{w17_in}.TW", f"{w17_in}.TWO"]
+            elif not w17_in.endswith((".TW", ".TWO")): cands = [w17_in.upper(), f"{w17_in.upper()}.TW"]
+            
+            sdf = pd.DataFrame(); v_ticker = None
+            with st.spinner("掃描全球資料庫..."):
+                for c in cands:
+                    temp = macro.get_single_stock_data(c, period="max")
+                    # 必須有足夠資料計算 284MA
+                    if not temp.empty and len(temp) >= 300: 
+                        sdf = temp; v_ticker = c; break
+            
+            if sdf.empty: 
+                st.error("❌ 查無數據，或歷史數據不足 300 天無法計算年線扣抵。")
+            else:
+                # --- Data Cleaning ---
+                try:
+                    if isinstance(sdf.columns, pd.MultiIndex): sdf.columns = sdf.columns.get_level_values(0)
+                    sdf.columns = [str(c).strip().capitalize() for c in sdf.columns]
+                    sdf = sdf.reset_index()
+                    # Date Column Normalization
+                    date_col = next((c for c in sdf.columns if str(c).lower() in ['date', 'datetime', 'index']), None)
+                    if date_col:
+                        sdf.rename(columns={date_col: 'Date'}, inplace=True)
+                        sdf['Date'] = pd.to_datetime(sdf['Date'])
+                        sdf.set_index('Date', inplace=True)
+                        sdf.sort_index(inplace=True)
+                    
+                    col_map = {}
+                    for c in sdf.columns:
+                        if c.lower() in ['close', 'price']: col_map[c] = 'Close'
+                        elif c.lower() in ['volume', 'vol']: col_map[c] = 'Volume'
+                    sdf.rename(columns=col_map, inplace=True)
+                    
+                    for req in ['Open', 'High', 'Low']:
+                        if req not in sdf.columns: sdf[req] = sdf['Close']
+                    if 'Volume' not in sdf.columns: sdf['Volume'] = 0
+                    
+                    # Ensure numeric
+                    for c in ['Close', 'Open', 'High', 'Low', 'Volume']:
+                        sdf[c] = pd.to_numeric(sdf[c], errors='coerce')
+                    sdf = sdf.dropna()
+
+                except Exception as e: st.error(f"資料格式錯誤: {e}"); st.stop()
+
+                # --- Base Indicators ---
+                sdf['MA87'] = sdf['Close'].rolling(87).mean()
+                sdf['MA284'] = sdf['Close'].rolling(284).mean()
+                
+                # [CRITICAL FIX] 計算 Cross_Signal 避免 Tab 3 報錯
+                sdf['Prev_MA87'] = sdf['MA87'].shift(1)
+                sdf['Prev_MA284'] = sdf['MA284'].shift(1)
+                sdf['Cross_Signal'] = 0
+                # 黃金交叉: 昨87<=昨284 且 今87>今284
+                sdf.loc[(sdf['Prev_MA87'] <= sdf['Prev_MA284']) & (sdf['MA87'] > sdf['MA284']), 'Cross_Signal'] = 1 
+                # 死亡交叉: 昨87>=昨284 且 今87<今284
+                sdf.loc[(sdf['Prev_MA87'] >= sdf['Prev_MA284']) & (sdf['MA87'] < sdf['MA284']), 'Cross_Signal'] = -1 
+                
+                # Latest Values
+                cp = float(sdf['Close'].iloc[-1])
+                op = float(sdf['Open'].iloc[-1])
+                m87 = float(sdf['MA87'].iloc[-1]) if not pd.isna(sdf['MA87'].iloc[-1]) else 0
+                m87_prev5 = float(sdf['MA87'].iloc[-6]) if len(sdf) > 6 and not pd.isna(sdf['MA87'].iloc[-6]) else m87
+                m284 = float(sdf['MA284'].iloc[-1]) if not pd.isna(sdf['MA284'].iloc[-1]) else 0
+
+                # Status Check
+                trend_days = 0; trend_status_str = "整理中"
+                if m87 > 0 and m284 > 0:
+                    is_bullish = m87 > m284
+                    trend_status_str = "🔥 中期多頭 (87>284)" if is_bullish else "❄️ 中期空頭 (87<284)"
+                    bull_series = sdf['MA87'] > sdf['MA284']
+                    current_state = bull_series.iloc[-1]
+                    for i in range(len(bull_series)-1, -1, -1):
+                        if bull_series.iloc[i] == current_state: trend_days += 1
+                        else: break
+                
+                granville_title, granville_desc = get_advanced_granville(cp, op, m87, m87_prev5)
+                bias = ((cp - m87) / m87) * 100 if m87 > 0 else 0
+
+                # --- Header Metrics ---
+                st.subheader(f"🎯 {v_ticker} 戰情報告")
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("目前股價", f"{cp:.2f}")
+                c2.metric("87MA (季線)", f"{m87:.2f}", f"{cp-m87:.2f}")
+                c3.metric("284MA (年線)", f"{m284:.2f}", f"{cp-m284:.2f}")
+                c4.metric("乖離率 (Bias)", f"{bias:.1f}%")
+                st.markdown("---")
+
+                # --- Tabs Definition ---
+                t1, t2, t3, t4, t5, t6, t7 = st.tabs([
+                    "🔮 雙軌扣抵預演", "📐 亞當理論", "🕯️ 日 K (含交叉)", 
+                    "🗓️ 月 K 線", "🧠 ARK 戰情室", "💎 智能估值", "🌊 5波模擬"
+                ])
+                
+                # ==========================================
+                # Tab 1: 量子路徑預演 (Titan V82: Quantum Path Prediction)
+                # ==========================================
+                with t1:
+                    st.markdown("#### 🔮 殿堂級全息戰略預演 (Holographic Strategy)")
+                    
+                    # --- 1. 參數設定與運算核心 (Smart Calc) ---
+                    # 自動計算波動率 (ATR 概念模擬)
+                    hist_volatility = sdf['Close'].pct_change().std() * 100 # 歷史波動率
+                    current_vol = max(1.5, hist_volatility) # 設一個地板值，避免死魚股波動太小
+
+                    # 擴展版面設定 (手機優化)
+                    with st.expander("⚙️ 戰略參數設定 (點擊展開)", expanded=False):
+                        c1, c2 = st.columns(2)
+                        with c1:
+                            sim_days = st.slider("預演天數", 10, 60, 20)
+                        with c2:
+                            # 不再只是死板輸入，而是作為「動能參數」
+                            momentum_input = st.number_input("假設動能 (%)", -10.0, 10.0, 0.0, step=0.5)
+                            st.caption(f"目前波動率: {current_vol:.1f}%")
+                    
+                    # 準備數據
+                    future_days = sim_days
+                    last_date = sdf.index[-1]
+                    future_dates = [last_date + pd.Timedelta(days=i+1) for i in range(future_days)]
+                    
+                    # --- 2. 建立「五維全息劇本」 (5D Scenarios) ---
+                    # 核心邏輯：不是畫一條線，而是畫出「機率錐」
+                    
+                    # 劇本 A: 慣性 (Inertia) - 跟隨目前 10MA 斜率
+                    slope_10 = (sdf['Close'].iloc[-1] - sdf['Close'].iloc[-10]) / 10
+                    path_inertia = [cp + slope_10 * (i+1) for i in range(future_days)]
+                    
+                    # 劇本 B: 波動率上緣 (Bull Case)
+                    path_bull = [cp * (1 + (current_vol/100) * np.sqrt(i+1)) for i in range(future_days)]
+                    
+                    # 劇本 C: 波動率下緣 (Bear Case)
+                    path_bear = [cp * (1 - (current_vol/100) * np.sqrt(i+1)) for i in range(future_days)]
+
+                    # 選擇主要顯示路徑 (根據用戶輸入微調)
+                    sim_prices = []
+                    curr_sim = cp
+                    for i in range(future_days):
+                        # 基礎波動 + 用戶輸入動能
+                        drift = momentum_input / 100
+                        curr_sim = curr_sim * (1 + drift)
+                        sim_prices.append(curr_sim)
+                    
+                    # 合併數據計算均線
+                    future_series = pd.Series(sim_prices, index=future_dates)
+                    combined_series = pd.concat([sdf['Close'], future_series])
+                    
+                    # 計算均線
+                    combined_ma87 = combined_series.rolling(87).mean()
+                    combined_ma284 = combined_series.rolling(284).mean()
+                    
+                    # 提取扣抵值 (Ghost Lines)
+                    start_idx = len(sdf)
+                    all_closes = combined_series.values
+                    deduct_87 = [all_closes[start_idx + i - 87] if (start_idx + i - 87) >= 0 else np.nan for i in range(future_days)]
+                    deduct_284 = [all_closes[start_idx + i - 284] if (start_idx + i - 284) >= 0 else np.nan for i in range(future_days)]
+                    
+                    # 建立 DataFrame
+                    f_df = pd.DataFrame({
+                        'Date': future_dates,
+                        'Sim_Price': sim_prices,
+                        'Bull_Bound': path_bull, # 機率錐上緣
+                        'Bear_Bound': path_bear, # 機率錐下緣
+                        'MA87': combined_ma87.loc[future_dates].values,
+                        'MA284': combined_ma284.loc[future_dates].values,
+                        'Deduct_87': deduct_87,
+                        'Deduct_284': deduct_284
+                    })
+
+                    # --- 3. 🤖 G-Score 量化評分系統 (The God Score) ---
+                    score = 0
+                    reasons = []
+                    
+                    # 因子 A: 趨勢 (30分)
+                    ma87_curr = combined_ma87.iloc[-future_days-1]
+                    ma284_curr = combined_ma284.iloc[-future_days-1]
+                    if cp > ma87_curr: score += 15
+                    if cp > ma284_curr: score += 15
+                    
+                    # 因子 B: 動能 (20分)
+                    if cp > sdf['Close'].iloc[-20:].mean(): score += 20
+                    
+                    # 因子 C: 雙線結構 (30分)
+                    bias_diff = abs(ma87_curr - ma284_curr) / ma284_curr
+                    is_squeeze = bias_diff < 0.015 # 乖離小於 1.5% 視為糾纏
+                    if ma87_curr > ma284_curr: score += 30 # 黃金排列
+                    
+                    # 因子 D: 扣抵壓力 (20分)
+                    future_deduct_87_avg = np.mean(deduct_87[:20])
+                    if future_deduct_87_avg < cp: score += 20 # 扣抵低值
+                    
+                    # 狀態定義
+                    if score >= 80: g_status = "🔥 多頭坦途 (Clear Sky)"
+                    elif score >= 50: g_status = "⚠️ 區間震盪 (Range Bound)"
+                    else: g_status = "🐻 空頭承壓 (Bearish Pressure)"
+
+                    # --- 4. 📱 總司令戰報 (Commander's Briefing) ---
+                    # 這是 V82 的核心：極致細緻的手機版文字介面
+                    
+                    # 計算關鍵價位
+                    fib_high = max(path_bull)
+                    fib_low = min(path_bear)
+                    fib_0618 = fib_low + (fib_high - fib_low) * 0.618
+                    
+                    # 雙線糾纏邏輯
+                    squeeze_msg = ""
+                    if is_squeeze:
+                        squeeze_msg = f"🌪️ **螺旋絞殺 (Squeeze)**：87MA 與 284MA 乖離僅 **{bias_diff*100:.2f}%**。兩線打結，預計 **3-5天內** 出現大變盤。"
+                    else:
+                        if ma87_curr > ma284_curr:
+                            squeeze_msg = "🚀 **發散攻擊**：均線呈多頭排列，開口擴大，趨勢明確。"
+                        else:
+                            squeeze_msg = "📉 **空頭壓制**：均線呈空頭排列，上方層層賣壓。"
+
+                    # 顯示戰報區塊
+                    st.markdown(f"""
+                    <div style="background-color:#1E1E1E; padding:15px; border-radius:10px; border: 1px solid #444;">
+                        <h3 style="color:#FFA500; margin:0;">📊 G-Score 量化總評：{score} 分</h3>
+                        <p style="color:#ddd; margin-top:5px;">狀態：<b>{g_status}</b> | 指令：<b>{'積極操作' if score>70 else '觀望/區間' if score>40 else '保守防禦'}</b></p>
+                        <hr style="border-top: 1px solid #555;">
+                        <h4 style="color:#4db8ff; margin:0;">⚔️ 雙線糾纏場 (Interaction)</h4>
+                        <p style="color:#ccc; font-size:14px; margin-top:5px;">{squeeze_msg}</p>
+                        <p style="color:#ccc; font-size:14px;">
+                           • <b>87MA (季)</b>：{ma87_curr:.1f}元 | 扣抵位置：{deduct_87[0]:.1f}元 ({'扣低助漲' if deduct_87[0]<cp else '扣高壓力'})<br>
+                           • <b>284MA (年)</b>：{ma284_curr:.1f}元 | 扣抵位置：{deduct_284[0]:.1f}元
+                        </p>
+                        <hr style="border-top: 1px solid #555;">
+                        <h4 style="color:#98FB98; margin:0;">🔮 五維全息劇本 (Scenarios)</h4>
+                        <p style="color:#ccc; font-size:14px; margin-top:5px;">關鍵變盤窗：<b>{(last_date + pd.Timedelta(days=13)).strftime('%m/%d')} (費氏轉折)</b></p>
+                        <ul style="color:#ccc; font-size:14px; padding-left:20px;">
+                            <li><b>劇本 A (慣性 50%)</b>：股價在 <b>{fib_low:.1f} ~ {fib_high:.1f}元</b> 區間震盪，以盤代跌。</li>
+                            <li><b>劇本 B (破底翻 30%)</b>：回測 <b>{fib_0618:.1f}元</b> (Fib 0.618) 支撐不破，V型反轉。</li>
+                            <li><b>劇本 C (風險 20%)</b>：若收盤跌破 <b>{min(deduct_87[:5]):.1f}元</b>，確認均線蓋頭，向下尋求支撐。</li>
+                        </ul>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    st.write("") # Spacer
+
+                    # --- 5. 視覺化 (Altair 波動率機率錐) ---
+                    # 這是 User 習慣的介面，加上機率錐 (Band)
+                    
+                    base = alt.Chart(f_df).encode(x='Date:T')
+                    
+                    # 機率錐 (Fan Chart)
+                    cone = base.mark_area(opacity=0.2, color='gray').encode(
+                        y='Bear_Bound:Q', y2='Bull_Bound:Q'
+                    )
+                    
+                    # 模擬線與均線
+                    line_sim = base.mark_line(color='white', strokeDash=[4,2]).encode(y='Sim_Price')
+                    line_87 = base.mark_line(color='orange', strokeWidth=2).encode(y='MA87')
+                    line_284 = base.mark_line(color='#00bfff', strokeWidth=2).encode(y='MA284')
+                    
+                    # 幽靈線 (Deduction)
+                    ghost_87 = base.mark_line(color='red', strokeDash=[1,1], opacity=0.5).encode(y='Deduct_87')
+                    ghost_284 = base.mark_line(color='blue', strokeDash=[1,1], opacity=0.3).encode(y='Deduct_284')
+                    
+                    # 歷史K線 (簡化版)
+                    hist_df = sdf.iloc[-60:].reset_index()
+                    base_hist = alt.Chart(hist_df).encode(x='Date:T')
+                    candle = base_hist.mark_rule().encode(y='Low', y2='High') + \
+                             base_hist.mark_bar().encode(y='Open', y2='Close', 
+                             color=alt.condition("datum.Open <= datum.Close", alt.value("#FF4B4B"), alt.value("#00AA00")))
+
+                    chart = (cone + candle + line_sim + line_87 + line_284 + ghost_87 + ghost_284).properties(
+                        height=500,
+                        title="量子路徑預演 (含波動率機率錐)"
+                    )
+                    
+                    st.altair_chart(chart.interactive(), use_container_width=True)
+                with t2: # 亞當
+                    adf = macro.calculate_adam_projection(sdf, 20)
+                    if not adf.empty:
+                        h = sdf.iloc[-60:].reset_index(); h['T']='History'
+                        p = adf.reset_index(); p['T']='Project'; p.rename(columns={'Projected_Price':'Close'}, inplace=True)
+                        st.altair_chart(alt.Chart(pd.concat([h,p])).mark_line().encode(x='Date:T', y=alt.Y('Close', scale=alt.Scale(zero=False)), color='T').interactive(), use_container_width=True)
+                    else: st.warning("資料不足。")
+
+                with t3: # 日 K
+                    kd = sdf.tail(252).reset_index()
+                    x_scale = alt.X('Date:T', axis=alt.Axis(format='%m/%d', title='Date'))
+                    base_k = alt.Chart(kd).encode(x=x_scale)
+                    candle = base_k.mark_rule().encode(y=alt.Y('Low', scale=alt.Scale(zero=False)), y2='High', color=alt.condition("datum.Open<=datum.Close", alt.value("#FF0000"), alt.value("#00AA00"))) + \
+                             base_k.mark_bar().encode(y='Open', y2='Close', color=alt.condition("datum.Open<=datum.Close", alt.value("#FF0000"), alt.value("#00AA00")))
+                    l87 = base_k.mark_line(color='blue', strokeWidth=2).encode(y='MA87', tooltip=['MA87'])
+                    l284 = base_k.mark_line(color='purple', strokeWidth=2).encode(y='MA284', tooltip=['MA284'])
+                    cross_data = kd[kd['Cross_Signal'] != 0]
+                    chart_price = candle + l87 + l284
+                    if not cross_data.empty:
+                        cross_points = alt.Chart(cross_data).mark_point(size=150, filled=True, opacity=1).encode(
+                            x='Date:T', y='Close', shape=alt.condition("datum.Cross_Signal > 0", alt.value("triangle-up"), alt.value("triangle-down")),
+                            color=alt.condition("datum.Cross_Signal > 0", alt.value("gold"), alt.value("black")),
+                            tooltip=['Date', 'Close', 'Cross_Signal']
+                        )
+                        chart_price += cross_points
+                    chart_price = chart_price.properties(height=350, title=f"{v_ticker} 日 K 線圖")
+                    chart_vol = base_k.mark_bar().encode(y='Volume', color=alt.condition("datum.Open<=datum.Close", alt.value("#FF0000"), alt.value("#00AA00"))).properties(height=100)
+                    st.altair_chart(alt.vconcat(chart_price, chart_vol).resolve_scale(x='shared').interactive(), use_container_width=True)
+                    st.caption("指標：🔵 87MA | 🟣 284MA | ▲ 黃金交叉 | ▼ 死亡交叉")
+
+                with t4: # 月 K
+                    try:
+                        freq = 'ME'
+                        try: sdf.resample('ME').last()
+                        except: freq = 'M'
+                        md = sdf.resample(freq).agg({'Open':'first','High':'max','Low':'min','Close':'last'}).dropna()
+                        if len(md) >= 43:
+                            md['MA43'] = md['Close'].rolling(43).mean(); md['MA87'] = md['Close'].rolling(87).mean(); md['MA284'] = md['Close'].rolling(284).mean()
+                            pm = md.tail(120).reset_index()
+                            bm = alt.Chart(pm).encode(x=alt.X('Date:T', axis=alt.Axis(format='%Y-%m')))
+                            mc = bm.mark_rule().encode(y='Low', y2='High', color=alt.condition("datum.Open<=datum.Close", alt.value("#FF0000"), alt.value("#00AA00"))) + \
+                                 bm.mark_bar().encode(y='Open', y2='Close', color=alt.condition("datum.Open<=datum.Close", alt.value("#FF0000"), alt.value("#00AA00")))
+                            ln43 = bm.mark_line(color='orange').encode(y='MA43'); ln87 = bm.mark_line(color='blue').encode(y='MA87'); ln284 = bm.mark_line(color='purple').encode(y='MA284')
+                            st.altair_chart((mc + ln43 + ln87 + ln284).interactive(), use_container_width=True)
+                            st.caption("月線指標：🟠 43MA | 🔵 87MA | 🟣 284MA")
+                        else: st.warning("月線資料不足。")
+                    except Exception as e: st.error(f"月線失敗: {e}")
+
+                # 財務數據 (Fix: Safe Defaults)
+                try:
+                    stock_info = yf.Ticker(v_ticker).info
+                    rev_ttm = stock_info.get('totalRevenue', 0)
+                    shares_out = stock_info.get('sharesOutstanding', 0)
+                    eps_ttm = stock_info.get('trailingEps', 0)
+                    analyst_growth = stock_info.get('revenueGrowth', stock_info.get('earningsGrowth', 0.15))
+                    if analyst_growth is None: analyst_growth = 0.15
+                    is_us_stock = not v_ticker.endswith(('.TW', '.TWO'))
+                    region_tag = "🇺🇸 美股" if is_us_stock else "🇹🇼 台股"
+                    region_hint = "美股通常享有較高估值溢價" if is_us_stock else "台股估值相對保守"
+                except: rev_ttm=0; shares_out=0; eps_ttm=0; analyst_growth=0.15; is_us_stock=False; region_tag="未知"; region_hint=""
+
+                with t5: # ARK [Fixed: Expanded Range + Safe Clamp]
+                    st.markdown(f"### 🧠 ARK 戰情室 ({region_tag})")
+                    st.info(f"💡 基於期望值的三情境推演。{region_hint}")
+                    if rev_ttm > 0 and shares_out > 0:
+                        c1, c2, c3 = st.columns(3)
+                        # 範圍解鎖：成長率 -1000% ~ 5000%, 淨利率 -500% ~ 500%, PE 0 ~ 9999
+                        safe_g = safe_clamp(analyst_growth, -10.0, 50.0)
+                        base_g = c1.number_input("基本成長率", -10.0, 50.0, safe_g, 0.01)
+                        base_m = c2.number_input("基本淨利率", -5.0, 5.0, 0.20, 0.01)
+                        base_pe = c3.number_input("基本 PE", 0.0, 9999.0, 30.0 if is_us_stock else 20.0, 1.0)
+                        
+                        scenarios = calculate_ark_scenarios(rev_ttm, shares_out, cp, base_g, base_m, base_pe)
+                        if scenarios:
+                            st.divider()
+                            k1, k2, k3 = st.columns(3)
+                            k1.error(f"🐻 熊市\n\n${scenarios['Bear']['Target']:.1f}\n\nCAGR: {scenarios['Bear']['CAGR']:.1%}")
+                            k2.info(f"⚖️ 基本\n\n${scenarios['Base']['Target']:.1f}\n\nCAGR: {scenarios['Base']['CAGR']:.1%}")
+                            k3.success(f"🐮 牛市\n\n${scenarios['Bull']['Target']:.1f}\n\nCAGR: {scenarios['Bull']['CAGR']:.1%}")
+                    else: st.warning("財務數據不足。")
+
+                with t6: # Smart Valuation [Fixed: Expanded Range + Safe Clamp]
+                    st.markdown(f"### 💎 智能估值引擎 ({region_tag})")
+                    if rev_ttm > 0:
+                        ind_opts = ["🚀 軟體/SaaS", "💊 生技", "⚙️ 硬體", "🏭 傳統"]
+                        ind_sel = st.selectbox("產業模板：", ind_opts)
+                        if "軟體" in ind_sel: def_m=0.25; def_pe=50.0
+                        elif "生技" in ind_sel: def_m=0.30; def_pe=40.0
+                        elif "硬體" in ind_sel: def_m=0.15; def_pe=25.0
+                        else: def_m=0.08; def_pe=15.0
+                        if is_us_stock: def_pe *= 1.2
+                        
+                        s1, s2, s3 = st.columns(3)
+                        safe_g_s = safe_clamp(analyst_growth, -10.0, 50.0)
+                        # ========== START: MODIFICATION ==========
+                        u_growth = s1.number_input("成長率", min_value=-10.0, max_value=None, value=safe_g_s, step=0.01)
+                        u_margin = s2.number_input("淨利率", min_value=-5.0, max_value=None, value=float(def_m), step=0.01)
+                        u_pe = s3.number_input("終端 PE", min_value=0.0, max_value=None, value=float(def_pe), step=1.0)
+                        # ========== END: MODIFICATION ==========
+                        
+                        fair_val = calculate_smart_valuation(eps_ttm, rev_ttm, shares_out, u_growth, u_margin, u_pe)
+                        st.divider()
+                        v1, v2 = st.columns(2)
+                        v1.metric("目前股價", f"{cp:.2f}")
+                        v2.metric("合理估值", f"{fair_val:.2f}", f"{cp-fair_val:.2f}", delta_color="inverse")
+                    else: st.warning("數據不足。")
+
+                with t7: # Wave Sim [High Visibility]
+                    st.markdown("### 🌊 艾略特 5 波模擬 (Elliott Wave Sim)")
+                    st.info("💡 虛線為 AI 模擬路徑。文字已優化，提高辨識度。")
+                    zz_df = calculate_zigzag(sdf.tail(300), 0.03)
+                    
+                    if not zz_df.empty:
+                        base_zz = alt.Chart(zz_df).encode(x='Date:T')
+                        real_line = base_zz.mark_line(point=True, color='black').encode(
+                            y=alt.Y('Price', scale=alt.Scale(zero=False)), tooltip=['Date', 'Price', 'Type'])
+                        text_price = base_zz.mark_text(dy=-15, color='blue', fontSize=14, fontWeight='bold').encode(y='Price', text=alt.Text('Price', format='.1f'))
+                        
+                        chart = real_line + text_price
+                        sim_df = calculate_5_waves(zz_df)
+                        if not sim_df.empty:
+                            sim_line = alt.Chart(sim_df).mark_line(strokeDash=[5,5], color='red').encode(
+                                x='Date:T', y='Price', tooltip=['Date', 'Price', 'Label'])
+                            sim_point = alt.Chart(sim_df[sim_df['Label'] != 'Origin']).mark_circle(color='red', size=60).encode(x='Date:T', y='Price')
+                            # [High Viz]: Blue, Bold, 14px, Larger Offset (dy=30)
+                            sim_label = alt.Chart(sim_df[sim_df['Label'] != 'Origin']).mark_text(dy=-30, color='blue', fontSize=14, fontWeight='bold').encode(
+                                x='Date:T', y='Price', text='Label')
+                            sim_target = alt.Chart(sim_df[sim_df['Label'] != 'Origin']).mark_text(dy=30, color='blue', fontSize=14, fontWeight='bold').encode(
+                                x='Date:T', y='Price', text=alt.Text('Price', format='.1f'))
+                            
+                            chart = chart + sim_line + sim_point + sim_label + sim_target
+                        st.altair_chart(chart.interactive(), use_container_width=True)
+                    else: st.warning("波動過小，無法計算。")
+
 # 建立 5 個戰略分頁 (手機最佳化配置)
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "🛡️ 宏觀大盤",   # Tab 1: Macro Dashboard
     "🏹 獵殺專區",   # Tab 2: Hunter Zone (SOP)
     "🎯 單兵狙擊",   # Tab 3: Sniper HQ
-    "🚀 戰力升級",   # Tab 4: Roadmap (Reserved)
+    "🚀 戰力升級",   # Tab 4: Upgrade & Stress Test
     "📚 戰略百科"    # Tab 5: Encyclopedia
 ])
 
@@ -1407,442 +1945,84 @@ with tab2: # 可轉債獵殺專區
         else:
             st.info("請先點擊本頁上方的掃描按鈕以生成推薦標的。")
 
-@st.fragment
-def render_sniper_tab():
-    """Renders the Sniper Tab content, isolated for performance."""
-    with st.expander("3.1 萬用個股狙擊雷達 (Universal Sniper)", expanded=True):
-        import numpy as np
-        import altair as alt
-
-        st.info("🌍 全球戰情模式：支援台股 (2330)、美股 (TSLA, PLTR)、加密貨幣BTC-USD。已啟動雙軌扣抵預演系統。")
-
-        w17_in = st.text_input("輸入代號或股名", value="2330", key="w17_final_v102").strip()
-
-        if w17_in:
-            try:
-                from macro_risk import STOCK_METADATA
-                N2T = {v['name'].strip(): k for k, v in STOCK_METADATA.items()}
-                if w17_in in N2T: w17_in = N2T[w17_in]
-            except: pass
-            
-            cands = [w17_in]
-            if w17_in.isdigit(): cands = [f"{w17_in}.TW", f"{w17_in}.TWO"]
-            elif not w17_in.endswith((".TW", ".TWO")): cands = [w17_in.upper(), f"{w17_in.upper()}.TW"]
-            
-            sdf = pd.DataFrame(); v_ticker = None
-            with st.spinner("掃描全球資料庫..."):
-                for c in cands:
-                    temp = macro.get_single_stock_data(c, period="max")
-                    # 必須有足夠資料計算 284MA
-                    if not temp.empty and len(temp) >= 300: 
-                        sdf = temp; v_ticker = c; break
-            
-            if sdf.empty: 
-                st.error("❌ 查無數據，或歷史數據不足 300 天無法計算年線扣抵。")
-            else:
-                # --- Data Cleaning ---
-                try:
-                    if isinstance(sdf.columns, pd.MultiIndex): sdf.columns = sdf.columns.get_level_values(0)
-                    sdf.columns = [str(c).strip().capitalize() for c in sdf.columns]
-                    sdf = sdf.reset_index()
-                    # Date Column Normalization
-                    date_col = next((c for c in sdf.columns if str(c).lower() in ['date', 'datetime', 'index']), None)
-                    if date_col:
-                        sdf.rename(columns={date_col: 'Date'}, inplace=True)
-                        sdf['Date'] = pd.to_datetime(sdf['Date'])
-                        sdf.set_index('Date', inplace=True)
-                        sdf.sort_index(inplace=True)
-                    
-                    col_map = {}
-                    for c in sdf.columns:
-                        if c.lower() in ['close', 'price']: col_map[c] = 'Close'
-                        elif c.lower() in ['volume', 'vol']: col_map[c] = 'Volume'
-                    sdf.rename(columns=col_map, inplace=True)
-                    
-                    for req in ['Open', 'High', 'Low']:
-                        if req not in sdf.columns: sdf[req] = sdf['Close']
-                    if 'Volume' not in sdf.columns: sdf['Volume'] = 0
-                    
-                    # Ensure numeric
-                    for c in ['Close', 'Open', 'High', 'Low', 'Volume']:
-                        sdf[c] = pd.to_numeric(sdf[c], errors='coerce')
-                    sdf = sdf.dropna()
-
-                except Exception as e: st.error(f"資料格式錯誤: {e}"); st.stop()
-
-                # --- Base Indicators ---
-                sdf['MA87'] = sdf['Close'].rolling(87).mean()
-                sdf['MA284'] = sdf['Close'].rolling(284).mean()
-                
-                # [CRITICAL FIX] 計算 Cross_Signal 避免 Tab 3 報錯
-                sdf['Prev_MA87'] = sdf['MA87'].shift(1)
-                sdf['Prev_MA284'] = sdf['MA284'].shift(1)
-                sdf['Cross_Signal'] = 0
-                # 黃金交叉: 昨87<=昨284 且 今87>今284
-                sdf.loc[(sdf['Prev_MA87'] <= sdf['Prev_MA284']) & (sdf['MA87'] > sdf['MA284']), 'Cross_Signal'] = 1 
-                # 死亡交叉: 昨87>=昨284 且 今87<今284
-                sdf.loc[(sdf['Prev_MA87'] >= sdf['Prev_MA284']) & (sdf['MA87'] < sdf['MA284']), 'Cross_Signal'] = -1 
-                
-                # Latest Values
-                cp = float(sdf['Close'].iloc[-1])
-                op = float(sdf['Open'].iloc[-1])
-                m87 = float(sdf['MA87'].iloc[-1]) if not pd.isna(sdf['MA87'].iloc[-1]) else 0
-                m87_prev5 = float(sdf['MA87'].iloc[-6]) if len(sdf) > 6 and not pd.isna(sdf['MA87'].iloc[-6]) else m87
-                m284 = float(sdf['MA284'].iloc[-1]) if not pd.isna(sdf['MA284'].iloc[-1]) else 0
-
-                # Status Check
-                trend_days = 0; trend_status_str = "整理中"
-                if m87 > 0 and m284 > 0:
-                    is_bullish = m87 > m284
-                    trend_status_str = "🔥 中期多頭 (87>284)" if is_bullish else "❄️ 中期空頭 (87<284)"
-                    bull_series = sdf['MA87'] > sdf['MA284']
-                    current_state = bull_series.iloc[-1]
-                    for i in range(len(bull_series)-1, -1, -1):
-                        if bull_series.iloc[i] == current_state: trend_days += 1
-                        else: break
-                
-                granville_title, granville_desc = get_advanced_granville(cp, op, m87, m87_prev5)
-                bias = ((cp - m87) / m87) * 100 if m87 > 0 else 0
-
-                # --- Header Metrics ---
-                st.subheader(f"🎯 {v_ticker} 戰情報告")
-                c1, c2, c3, c4 = st.columns(4)
-                c1.metric("目前股價", f"{cp:.2f}")
-                c2.metric("87MA (季線)", f"{m87:.2f}", f"{cp-m87:.2f}")
-                c3.metric("284MA (年線)", f"{m284:.2f}", f"{cp-m284:.2f}")
-                c4.metric("乖離率 (Bias)", f"{bias:.1f}%")
-                st.markdown("---")
-
-                # --- Tabs Definition ---
-                t1, t2, t3, t4, t5, t6, t7 = st.tabs([
-                    "🔮 雙軌扣抵預演", "📐 亞當理論", "🕯️ 日 K (含交叉)", 
-                    "🗓️ 月 K 線", "🧠 ARK 戰情室", "💎 智能估值", "🌊 5波模擬"
-                ])
-                
-                # ==========================================
-                # Tab 1: 量子路徑預演 (Titan V82: Quantum Path Prediction)
-                # ==========================================
-                with t1:
-                    st.markdown("#### 🔮 殿堂級全息戰略預演 (Holographic Strategy)")
-                    
-                    # --- 1. 參數設定與運算核心 (Smart Calc) ---
-                    # 自動計算波動率 (ATR 概念模擬)
-                    hist_volatility = sdf['Close'].pct_change().std() * 100 # 歷史波動率
-                    current_vol = max(1.5, hist_volatility) # 設一個地板值，避免死魚股波動太小
-
-                    # 擴展版面設定 (手機優化)
-                    with st.expander("⚙️ 戰略參數設定 (點擊展開)", expanded=False):
-                        c1, c2 = st.columns(2)
-                        with c1:
-                            sim_days = st.slider("預演天數", 10, 60, 20)
-                        with c2:
-                            # 不再只是死板輸入，而是作為「動能參數」
-                            momentum_input = st.number_input("假設動能 (%)", -10.0, 10.0, 0.0, step=0.5)
-                            st.caption(f"目前波動率: {current_vol:.1f}%")
-                    
-                    # 準備數據
-                    future_days = sim_days
-                    last_date = sdf.index[-1]
-                    future_dates = [last_date + pd.Timedelta(days=i+1) for i in range(future_days)]
-                    
-                    # --- 2. 建立「五維全息劇本」 (5D Scenarios) ---
-                    # 核心邏輯：不是畫一條線，而是畫出「機率錐」
-                    
-                    # 劇本 A: 慣性 (Inertia) - 跟隨目前 10MA 斜率
-                    slope_10 = (sdf['Close'].iloc[-1] - sdf['Close'].iloc[-10]) / 10
-                    path_inertia = [cp + slope_10 * (i+1) for i in range(future_days)]
-                    
-                    # 劇本 B: 波動率上緣 (Bull Case)
-                    path_bull = [cp * (1 + (current_vol/100) * np.sqrt(i+1)) for i in range(future_days)]
-                    
-                    # 劇本 C: 波動率下緣 (Bear Case)
-                    path_bear = [cp * (1 - (current_vol/100) * np.sqrt(i+1)) for i in range(future_days)]
-
-                    # 選擇主要顯示路徑 (根據用戶輸入微調)
-                    sim_prices = []
-                    curr_sim = cp
-                    for i in range(future_days):
-                        # 基礎波動 + 用戶輸入動能
-                        drift = momentum_input / 100
-                        curr_sim = curr_sim * (1 + drift)
-                        sim_prices.append(curr_sim)
-                    
-                    # 合併數據計算均線
-                    future_series = pd.Series(sim_prices, index=future_dates)
-                    combined_series = pd.concat([sdf['Close'], future_series])
-                    
-                    # 計算均線
-                    combined_ma87 = combined_series.rolling(87).mean()
-                    combined_ma284 = combined_series.rolling(284).mean()
-                    
-                    # 提取扣抵值 (Ghost Lines)
-                    start_idx = len(sdf)
-                    all_closes = combined_series.values
-                    deduct_87 = [all_closes[start_idx + i - 87] if (start_idx + i - 87) >= 0 else np.nan for i in range(future_days)]
-                    deduct_284 = [all_closes[start_idx + i - 284] if (start_idx + i - 284) >= 0 else np.nan for i in range(future_days)]
-                    
-                    # 建立 DataFrame
-                    f_df = pd.DataFrame({
-                        'Date': future_dates,
-                        'Sim_Price': sim_prices,
-                        'Bull_Bound': path_bull, # 機率錐上緣
-                        'Bear_Bound': path_bear, # 機率錐下緣
-                        'MA87': combined_ma87.loc[future_dates].values,
-                        'MA284': combined_ma284.loc[future_dates].values,
-                        'Deduct_87': deduct_87,
-                        'Deduct_284': deduct_284
-                    })
-
-                    # --- 3. 🤖 G-Score 量化評分系統 (The God Score) ---
-                    score = 0
-                    reasons = []
-                    
-                    # 因子 A: 趨勢 (30分)
-                    ma87_curr = combined_ma87.iloc[-future_days-1]
-                    ma284_curr = combined_ma284.iloc[-future_days-1]
-                    if cp > ma87_curr: score += 15
-                    if cp > ma284_curr: score += 15
-                    
-                    # 因子 B: 動能 (20分)
-                    if cp > sdf['Close'].iloc[-20:].mean(): score += 20
-                    
-                    # 因子 C: 雙線結構 (30分)
-                    bias_diff = abs(ma87_curr - ma284_curr) / ma284_curr
-                    is_squeeze = bias_diff < 0.015 # 乖離小於 1.5% 視為糾纏
-                    if ma87_curr > ma284_curr: score += 30 # 黃金排列
-                    
-                    # 因子 D: 扣抵壓力 (20分)
-                    future_deduct_87_avg = np.mean(deduct_87[:20])
-                    if future_deduct_87_avg < cp: score += 20 # 扣抵低值
-                    
-                    # 狀態定義
-                    if score >= 80: g_status = "🔥 多頭坦途 (Clear Sky)"
-                    elif score >= 50: g_status = "⚠️ 區間震盪 (Range Bound)"
-                    else: g_status = "🐻 空頭承壓 (Bearish Pressure)"
-
-                    # --- 4. 📱 總司令戰報 (Commander's Briefing) ---
-                    # 這是 V82 的核心：極致細緻的手機版文字介面
-                    
-                    # 計算關鍵價位
-                    fib_high = max(path_bull)
-                    fib_low = min(path_bear)
-                    fib_0618 = fib_low + (fib_high - fib_low) * 0.618
-                    
-                    # 雙線糾纏邏輯
-                    squeeze_msg = ""
-                    if is_squeeze:
-                        squeeze_msg = f"🌪️ **螺旋絞殺 (Squeeze)**：87MA 與 284MA 乖離僅 **{bias_diff*100:.2f}%**。兩線打結，預計 **3-5天內** 出現大變盤。"
-                    else:
-                        if ma87_curr > ma284_curr:
-                            squeeze_msg = "🚀 **發散攻擊**：均線呈多頭排列，開口擴大，趨勢明確。"
-                        else:
-                            squeeze_msg = "📉 **空頭壓制**：均線呈空頭排列，上方層層賣壓。"
-
-                    # 顯示戰報區塊
-                    st.markdown(f"""
-                    <div style="background-color:#1E1E1E; padding:15px; border-radius:10px; border: 1px solid #444;">
-                        <h3 style="color:#FFA500; margin:0;">📊 G-Score 量化總評：{score} 分</h3>
-                        <p style="color:#ddd; margin-top:5px;">狀態：<b>{g_status}</b> | 指令：<b>{'積極操作' if score>70 else '觀望/區間' if score>40 else '保守防禦'}</b></p>
-                        <hr style="border-top: 1px solid #555;">
-                        <h4 style="color:#4db8ff; margin:0;">⚔️ 雙線糾纏場 (Interaction)</h4>
-                        <p style="color:#ccc; font-size:14px; margin-top:5px;">{squeeze_msg}</p>
-                        <p style="color:#ccc; font-size:14px;">
-                           • <b>87MA (季)</b>：{ma87_curr:.1f}元 | 扣抵位置：{deduct_87[0]:.1f}元 ({'扣低助漲' if deduct_87[0]<cp else '扣高壓力'})<br>
-                           • <b>284MA (年)</b>：{ma284_curr:.1f}元 | 扣抵位置：{deduct_284[0]:.1f}元
-                        </p>
-                        <hr style="border-top: 1px solid #555;">
-                        <h4 style="color:#98FB98; margin:0;">🔮 五維全息劇本 (Scenarios)</h4>
-                        <p style="color:#ccc; font-size:14px; margin-top:5px;">關鍵變盤窗：<b>{(last_date + pd.Timedelta(days=13)).strftime('%m/%d')} (費氏轉折)</b></p>
-                        <ul style="color:#ccc; font-size:14px; padding-left:20px;">
-                            <li><b>劇本 A (慣性 50%)</b>：股價在 <b>{fib_low:.1f} ~ {fib_high:.1f}元</b> 區間震盪，以盤代跌。</li>
-                            <li><b>劇本 B (破底翻 30%)</b>：回測 <b>{fib_0618:.1f}元</b> (Fib 0.618) 支撐不破，V型反轉。</li>
-                            <li><b>劇本 C (風險 20%)</b>：若收盤跌破 <b>{min(deduct_87[:5]):.1f}元</b>，確認均線蓋頭，向下尋求支撐。</li>
-                        </ul>
-                    </div>
-                    """, unsafe_allow_html=True)
-                    
-                    st.write("") # Spacer
-
-                    # --- 5. 視覺化 (Altair 波動率機率錐) ---
-                    # 這是 User 習慣的介面，加上機率錐 (Band)
-                    
-                    base = alt.Chart(f_df).encode(x='Date:T')
-                    
-                    # 機率錐 (Fan Chart)
-                    cone = base.mark_area(opacity=0.2, color='gray').encode(
-                        y='Bear_Bound:Q', y2='Bull_Bound:Q'
-                    )
-                    
-                    # 模擬線與均線
-                    line_sim = base.mark_line(color='white', strokeDash=[4,2]).encode(y='Sim_Price')
-                    line_87 = base.mark_line(color='orange', strokeWidth=2).encode(y='MA87')
-                    line_284 = base.mark_line(color='#00bfff', strokeWidth=2).encode(y='MA284')
-                    
-                    # 幽靈線 (Deduction)
-                    ghost_87 = base.mark_line(color='red', strokeDash=[1,1], opacity=0.5).encode(y='Deduct_87')
-                    ghost_284 = base.mark_line(color='blue', strokeDash=[1,1], opacity=0.3).encode(y='Deduct_284')
-                    
-                    # 歷史K線 (簡化版)
-                    hist_df = sdf.iloc[-60:].reset_index()
-                    base_hist = alt.Chart(hist_df).encode(x='Date:T')
-                    candle = base_hist.mark_rule().encode(y='Low', y2='High') + \
-                             base_hist.mark_bar().encode(y='Open', y2='Close', 
-                             color=alt.condition("datum.Open <= datum.Close", alt.value("#FF4B4B"), alt.value("#00AA00")))
-
-                    chart = (cone + candle + line_sim + line_87 + line_284 + ghost_87 + ghost_284).properties(
-                        height=500,
-                        title="量子路徑預演 (含波動率機率錐)"
-                    )
-                    
-                    st.altair_chart(chart.interactive(), use_container_width=True)
-                with t2: # 亞當
-                    adf = macro.calculate_adam_projection(sdf, 20)
-                    if not adf.empty:
-                        h = sdf.iloc[-60:].reset_index(); h['T']='History'
-                        p = adf.reset_index(); p['T']='Project'; p.rename(columns={'Projected_Price':'Close'}, inplace=True)
-                        st.altair_chart(alt.Chart(pd.concat([h,p])).mark_line().encode(x='Date:T', y=alt.Y('Close', scale=alt.Scale(zero=False)), color='T').interactive(), use_container_width=True)
-                    else: st.warning("資料不足。")
-
-                with t3: # 日 K
-                    kd = sdf.tail(252).reset_index()
-                    x_scale = alt.X('Date:T', axis=alt.Axis(format='%m/%d', title='Date'))
-                    base_k = alt.Chart(kd).encode(x=x_scale)
-                    candle = base_k.mark_rule().encode(y=alt.Y('Low', scale=alt.Scale(zero=False)), y2='High', color=alt.condition("datum.Open<=datum.Close", alt.value("#FF0000"), alt.value("#00AA00"))) + \
-                             base_k.mark_bar().encode(y='Open', y2='Close', color=alt.condition("datum.Open<=datum.Close", alt.value("#FF0000"), alt.value("#00AA00")))
-                    l87 = base_k.mark_line(color='blue', strokeWidth=2).encode(y='MA87', tooltip=['MA87'])
-                    l284 = base_k.mark_line(color='purple', strokeWidth=2).encode(y='MA284', tooltip=['MA284'])
-                    cross_data = kd[kd['Cross_Signal'] != 0]
-                    chart_price = candle + l87 + l284
-                    if not cross_data.empty:
-                        cross_points = alt.Chart(cross_data).mark_point(size=150, filled=True, opacity=1).encode(
-                            x='Date:T', y='Close', shape=alt.condition("datum.Cross_Signal > 0", alt.value("triangle-up"), alt.value("triangle-down")),
-                            color=alt.condition("datum.Cross_Signal > 0", alt.value("gold"), alt.value("black")),
-                            tooltip=['Date', 'Close', 'Cross_Signal']
-                        )
-                        chart_price += cross_points
-                    chart_price = chart_price.properties(height=350, title=f"{v_ticker} 日 K 線圖")
-                    chart_vol = base_k.mark_bar().encode(y='Volume', color=alt.condition("datum.Open<=datum.Close", alt.value("#FF0000"), alt.value("#00AA00"))).properties(height=100)
-                    st.altair_chart(alt.vconcat(chart_price, chart_vol).resolve_scale(x='shared').interactive(), use_container_width=True)
-                    st.caption("指標：🔵 87MA | 🟣 284MA | ▲ 黃金交叉 | ▼ 死亡交叉")
-
-                with t4: # 月 K
-                    try:
-                        freq = 'ME'
-                        try: sdf.resample('ME').last()
-                        except: freq = 'M'
-                        md = sdf.resample(freq).agg({'Open':'first','High':'max','Low':'min','Close':'last'}).dropna()
-                        if len(md) >= 43:
-                            md['MA43'] = md['Close'].rolling(43).mean(); md['MA87'] = md['Close'].rolling(87).mean(); md['MA284'] = md['Close'].rolling(284).mean()
-                            pm = md.tail(120).reset_index()
-                            bm = alt.Chart(pm).encode(x=alt.X('Date:T', axis=alt.Axis(format='%Y-%m')))
-                            mc = bm.mark_rule().encode(y='Low', y2='High', color=alt.condition("datum.Open<=datum.Close", alt.value("#FF0000"), alt.value("#00AA00"))) + \
-                                 bm.mark_bar().encode(y='Open', y2='Close', color=alt.condition("datum.Open<=datum.Close", alt.value("#FF0000"), alt.value("#00AA00")))
-                            ln43 = bm.mark_line(color='orange').encode(y='MA43'); ln87 = bm.mark_line(color='blue').encode(y='MA87'); ln284 = bm.mark_line(color='purple').encode(y='MA284')
-                            st.altair_chart((mc + ln43 + ln87 + ln284).interactive(), use_container_width=True)
-                            st.caption("月線指標：🟠 43MA | 🔵 87MA | 🟣 284MA")
-                        else: st.warning("月線資料不足。")
-                    except Exception as e: st.error(f"月線失敗: {e}")
-
-                # 財務數據 (Fix: Safe Defaults)
-                try:
-                    stock_info = yf.Ticker(v_ticker).info
-                    rev_ttm = stock_info.get('totalRevenue', 0)
-                    shares_out = stock_info.get('sharesOutstanding', 0)
-                    eps_ttm = stock_info.get('trailingEps', 0)
-                    analyst_growth = stock_info.get('revenueGrowth', stock_info.get('earningsGrowth', 0.15))
-                    if analyst_growth is None: analyst_growth = 0.15
-                    is_us_stock = not v_ticker.endswith(('.TW', '.TWO'))
-                    region_tag = "🇺🇸 美股" if is_us_stock else "🇹🇼 台股"
-                    region_hint = "美股通常享有較高估值溢價" if is_us_stock else "台股估值相對保守"
-                except: rev_ttm=0; shares_out=0; eps_ttm=0; analyst_growth=0.15; is_us_stock=False; region_tag="未知"; region_hint=""
-
-                with t5: # ARK [Fixed: Expanded Range + Safe Clamp]
-                    st.markdown(f"### 🧠 ARK 戰情室 ({region_tag})")
-                    st.info(f"💡 基於期望值的三情境推演。{region_hint}")
-                    if rev_ttm > 0 and shares_out > 0:
-                        c1, c2, c3 = st.columns(3)
-                        # 範圍解鎖：成長率 -1000% ~ 5000%, 淨利率 -500% ~ 500%, PE 0 ~ 9999
-                        safe_g = safe_clamp(analyst_growth, -10.0, 50.0)
-                        base_g = c1.number_input("基本成長率", -10.0, 50.0, safe_g, 0.01)
-                        base_m = c2.number_input("基本淨利率", -5.0, 5.0, 0.20, 0.01)
-                        base_pe = c3.number_input("基本 PE", 0.0, 9999.0, 30.0 if is_us_stock else 20.0, 1.0)
-                        
-                        scenarios = calculate_ark_scenarios(rev_ttm, shares_out, cp, base_g, base_m, base_pe)
-                        if scenarios:
-                            st.divider()
-                            k1, k2, k3 = st.columns(3)
-                            k1.error(f"🐻 熊市\n\n${scenarios['Bear']['Target']:.1f}\n\nCAGR: {scenarios['Bear']['CAGR']:.1%}")
-                            k2.info(f"⚖️ 基本\n\n${scenarios['Base']['Target']:.1f}\n\nCAGR: {scenarios['Base']['CAGR']:.1%}")
-                            k3.success(f"🐮 牛市\n\n${scenarios['Bull']['Target']:.1f}\n\nCAGR: {scenarios['Bull']['CAGR']:.1%}")
-                    else: st.warning("財務數據不足。")
-
-                with t6: # Smart Valuation [Fixed: Expanded Range + Safe Clamp]
-                    st.markdown(f"### 💎 智能估值引擎 ({region_tag})")
-                    if rev_ttm > 0:
-                        ind_opts = ["🚀 軟體/SaaS", "💊 生技", "⚙️ 硬體", "🏭 傳統"]
-                        ind_sel = st.selectbox("產業模板：", ind_opts)
-                        if "軟體" in ind_sel: def_m=0.25; def_pe=50.0
-                        elif "生技" in ind_sel: def_m=0.30; def_pe=40.0
-                        elif "硬體" in ind_sel: def_m=0.15; def_pe=25.0
-                        else: def_m=0.08; def_pe=15.0
-                        if is_us_stock: def_pe *= 1.2
-                        
-                        s1, s2, s3 = st.columns(3)
-                        safe_g_s = safe_clamp(analyst_growth, -10.0, 50.0)
-                        # ========== START: MODIFICATION ==========
-                        u_growth = s1.number_input("成長率", min_value=-10.0, max_value=None, value=safe_g_s, step=0.01)
-                        u_margin = s2.number_input("淨利率", min_value=-5.0, max_value=None, value=float(def_m), step=0.01)
-                        u_pe = s3.number_input("終端 PE", min_value=0.0, max_value=None, value=float(def_pe), step=1.0)
-                        # ========== END: MODIFICATION ==========
-                        
-                        fair_val = calculate_smart_valuation(eps_ttm, rev_ttm, shares_out, u_growth, u_margin, u_pe)
-                        st.divider()
-                        v1, v2 = st.columns(2)
-                        v1.metric("目前股價", f"{cp:.2f}")
-                        v2.metric("合理估值", f"{fair_val:.2f}", f"{cp-fair_val:.2f}", delta_color="inverse")
-                    else: st.warning("數據不足。")
-
-                with t7: # Wave Sim [High Visibility]
-                    st.markdown("### 🌊 艾略特 5 波模擬 (Elliott Wave Sim)")
-                    st.info("💡 虛線為 AI 模擬路徑。文字已優化，提高辨識度。")
-                    zz_df = calculate_zigzag(sdf.tail(300), 0.03)
-                    
-                    if not zz_df.empty:
-                        base_zz = alt.Chart(zz_df).encode(x='Date:T')
-                        real_line = base_zz.mark_line(point=True, color='black').encode(
-                            y=alt.Y('Price', scale=alt.Scale(zero=False)), tooltip=['Date', 'Price', 'Type'])
-                        text_price = base_zz.mark_text(dy=-15, color='blue', fontSize=14, fontWeight='bold').encode(y='Price', text=alt.Text('Price', format='.1f'))
-                        
-                        chart = real_line + text_price
-                        sim_df = calculate_5_waves(zz_df)
-                        if not sim_df.empty:
-                            sim_line = alt.Chart(sim_df).mark_line(strokeDash=[5,5], color='red').encode(
-                                x='Date:T', y='Price', tooltip=['Date', 'Price', 'Label'])
-                            sim_point = alt.Chart(sim_df[sim_df['Label'] != 'Origin']).mark_circle(color='red', size=60).encode(x='Date:T', y='Price')
-                            # [High Viz]: Blue, Bold, 14px, Larger Offset (dy=30)
-                            sim_label = alt.Chart(sim_df[sim_df['Label'] != 'Origin']).mark_text(dy=-30, color='blue', fontSize=14, fontWeight='bold').encode(
-                                x='Date:T', y='Price', text='Label')
-                            sim_target = alt.Chart(sim_df[sim_df['Label'] != 'Origin']).mark_text(dy=30, color='blue', fontSize=14, fontWeight='bold').encode(
-                                x='Date:T', y='Price', text=alt.Text('Price', format='.1f'))
-                            
-                            chart = chart + sim_line + sim_point + sim_label + sim_target
-                        st.altair_chart(chart.interactive(), use_container_width=True)
-                    else: st.warning("波動過小，無法計算。")
-
 with tab3: # 單兵狙擊總部
     render_sniper_tab()
 
-with tab4: # 戰力升級預留區
-    st.info("⚠️ 系統維修中 (System Under Maintenance)")
-    st.markdown("""
-    ### 🚧 核彈級戰略升級路徑 (Roadmap)
-    本區域預留給以下投行級模組，目前施工中：
-    * **1. 黑天鵝壓力測試矩陣 (Black Swan Stress Matrix)**
-    * **2. 流動性深度與吃貨估算 (Liquidity & Impact Model)**
-    * **3. 凱利公式自動倉位演算 (Kelly Execution Engine)**
-    * **4. 組合風險矩陣 (Portfolio Risk Matrix)**
-    * **5. AI 財報關鍵字獵殺升級 (AI Keyword Hunter V2)**
-    """)
+with tab4: # 戰力升級
+    with st.expander("4.1 全球黑天鵝壓力測試 (13F Institutional Level)", expanded=False):
+        st.info("此模組模擬在不同全球市場衝擊下，您投資組合的預期損益。")
+        
+        portfolio_example = (
+            "AAPL;100\n"
+            "2330.TW;1000\n"
+            "NVDA;50 | PLTR;500\n"
+            "CASH;100000"
+        )
+        
+        portfolio_input = st.text_area(
+            "輸入您的全球資產 (格式: `代號;張數或股數`)",
+            value=portfolio_example,
+            height=200,
+            help="每筆資產用 `|` 或換行隔開。台股請加 .TW/.TWO 後綴。現金請用 CASH。"
+        )
+
+        if st.button("開始壓力測試"):
+            with st.spinner("正在執行機構級壓力測試..."):
+                results_df, summary = run_stress_test(portfolio_input)
+
+                if "error" in summary:
+                    st.error(summary["error"])
+                elif not results_df.empty:
+                    st.subheader("📊 壓力測試結果")
+                    
+                    total_value = summary.get('total_value', 0)
+                    st.metric("目前總資產 (TWD)", f"{total_value:,.0f} 元")
+
+                    # 總計損益
+                    st.markdown("#### **情境總損益**")
+                    total_pnl = results_df.filter(like='損益').sum()
+                    
+                    cols = st.columns(len(total_pnl))
+                    for i, (scenario, pnl) in enumerate(total_pnl.items()):
+                        scenario_name = scenario.replace('損益_', '')
+                        delta_pct = (pnl / total_value) * 100 if total_value > 0 else 0
+                        cols[i].metric(
+                            label=scenario_name,
+                            value=f"{pnl:,.0f}",
+                            delta=f"{delta_pct:.2f}%"
+                        )
+
+                    # 細項結果
+                    st.markdown("#### **各資產預估損益明細**")
+                    display_cols = ['ticker', 'type', 'value_twd'] + [col for col in results_df.columns if '損益' in col]
+                    
+                    def style_pnl(val):
+                        color = 'red' if val < 0 else 'green' if val > 0 else 'white'
+                        return f'color: {color}'
+
+                    st.dataframe(
+                        results_df[display_cols].style.format({
+                            'value_twd': '{:,.0f}',
+                            '損益_回檔 (-5%)': '{:,.0f}',
+                            '損益_修正 (-10%)': '{:,.0f}',
+                            '損益_技術熊市 (-20%)': '{:,.0f}',
+                            '損益_金融海嘯 (-30%)': '{:,.0f}',
+                        }).applymap(style_pnl, subset=[col for col in results_df.columns if '損益' in col]),
+                        use_container_width=True
+                    )
+                else:
+                    st.warning("請輸入有效的投資組合以進行分析。")
+
+    with st.expander("4.2 戰略升級路徑 (Roadmap)", expanded=False):
+        st.markdown("""
+        ### 🚧 核彈級戰略升級路徑 (Roadmap)
+        本區域預留給以下投行級模組，目前施工中：
+        * **1. 黑天鵝壓力測試矩陣 (Black Swan Stress Matrix)**
+        * **2. 流動性深度與吃貨估算 (Liquidity & Impact Model)**
+        * **3. 凱利公式自動倉位演算 (Kelly Execution Engine)**
+        * **4. 組合風險矩陣 (Portfolio Risk Matrix)**
+        * **5. AI 財報關鍵字獵殺升級 (AI Keyword Hunter V2)**
+        """)
 
 with tab5: # 戰略百科
     with st.expander("5.1 SOP 戰略百科 (SOP Strategy Encyclopedia)", expanded=False):
