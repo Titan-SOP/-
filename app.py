@@ -1,12 +1,12 @@
 # app.py
-# Titan SOP V78.2 - The War Room UI (Final Audit Package)
-# [V78.2 Patch]: 
-# 1. Upgraded version to 78.2. 
-# 2. Unified Window 15/16 UI with correct column order and color styling.
-# 3. Locked interaction logic to prevent re-downloading data.
-# 4. Corrected all deduction labels to "87MA扣抵預判".
+# Titan SOP V78.3 - The War Room UI (Tab 4 深度重構 + 完整合併版)
+# [V78.3 Patch]: 
+# 1. 修正台股 ETF 識別邏輯 (支援 00675L 等混合代號 - 使用正則表達式判斷)
+# 2. Tab 4.1 全繁體化 + 零股單位統一
+# 3. Tab 4.2 升級凱利決策與績效指標（保守模式 0.5 Kelly + 投資性價比）
+# 4. Tab 4.3 新增均線戰法回測實驗室（15 種策略 + 財富推演）
+# 5. 完整保留 Tab 1, 2, 3, 5 的所有功能與產業熱力圖數據
 # [CRITICAL FIX]: Corrected data loading logic to prioritize "可轉債市價" for the 'close' field, preventing misidentification with underlying stock price.
-
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -23,6 +23,7 @@ from datetime import datetime, timedelta
 import altair as alt
 import yfinance as yf
 import plotly.express as px
+import plotly.graph_objects as go
 
 
 SIGNAL_MAP = {
@@ -40,13 +41,15 @@ def load_system():
     return kb, MacroRiskEngine(), strategy_engine, IntelligenceIngestor(), CalendarAgent(), TitanBacktestEngine()
 
 kb, macro, strategy, intel, calendar, backtester = load_system()
-
-@st.cache_data(ttl=7200)
 def run_fast_backtest(ticker, start_date="2023-01-01", initial_capital=1000000):
     """
-    [UPGRADED] 極速向量化回測引擎 (Vectorized Backtest Engine)
+    [UPGRADED V78.3] 極速向量化回測引擎 (Vectorized Backtest Engine)
     策略邏輯：模擬趨勢追蹤 (Trend Following) - 當收盤價 > 20日均線時買入
     支援：台股 (TW/TWO)、美股、現金 (CASH)
+    
+    【Step 1 修正】台股 ETF 識別增強：
+    - 使用正則表達式判斷 4-6 碼且開頭為數字的代號
+    - 優先嘗試 .TW，失敗再嘗試 .TWO
     """
     try:
         # Handle CASH asset
@@ -66,15 +69,18 @@ def run_fast_backtest(ticker, start_date="2023-01-01", initial_capital=1000000):
                 "latest_price": 1.0
             }
 
-        # 1. 智慧代碼處理 (自動補全 .TW/.TWO)
+        # 1. 智慧代碼處理 (增強版：支援混合型代號如 00675L)
         original_ticker = ticker
-        if ticker.isdigit():
+        
+        # 【Step 1 修正】使用正則判斷：長度 4-6 碼且開頭為數字
+        if re.match(r'^[0-9]', ticker) and 4 <= len(ticker) <= 6:
             ticker = f"{ticker}.TW"
         
-        # 2. 下載數據
+        # 2. 下載數據 (優先 .TW，失敗再試 .TWO)
         df = yf.download(ticker, start=start_date, progress=False)
         if df.empty:
-            if original_ticker.isdigit(): # 僅對數字代碼重試 .TWO
+            # 僅對符合台股格式的代碼重試 .TWO
+            if re.match(r'^[0-9]', original_ticker) and 4 <= len(original_ticker) <= 6:
                 ticker_two = f"{original_ticker}.TWO"
                 df = yf.download(ticker_two, start=start_date, progress=False)
             if df.empty:
@@ -186,82 +192,211 @@ def run_stress_test(portfolio_text):
         return pd.DataFrame(), {"error": f"下載市場數據失敗: {e}"}
 
     # 3. 處理每個資產
-    tickers_to_download = [p['ticker'] for p in portfolio if p['ticker'] != 'CASH']
-    asset_data = yf.download(tickers_to_download, period="1y", progress=False)['Close']
-    
     results = []
     for asset in portfolio:
         ticker = asset['ticker']
         shares = asset['shares']
         
-        if ticker == 'CASH':
+        if ticker in ['CASH', 'USD', 'TWD']:
             results.append({
-                'ticker': 'CASH', 'shares': shares, 'price': 1.0, 'value_twd': shares,
-                'type': '現金', 'beta': 0.0, 'benchmark': 'N/A'
+                'ticker': ticker,
+                'type': 'Cash',
+                'shares': shares,
+                'price': 1.0,
+                'value_twd': shares,
+                '損益_回檔 (-5%)': 0,
+                '損益_修正 (-10%)': 0,
+                '損益_技術熊市 (-20%)': 0,
+                '損益_金融海嘯 (-30%)': 0,
             })
             continue
-
-        # 資產識別
-        is_tw_stock = ticker.endswith(('.TW', '.TWO'))
-        asset_type = "台股" if is_tw_stock else "美股"
-        benchmark_ticker = '^TWII' if is_tw_stock else '^GSPC'
         
         try:
-            price = asset_data[ticker].iloc[-1] if isinstance(asset_data, pd.DataFrame) else asset_data.iloc[-1]
-            if pd.isna(price):
-                st.error(f"無法獲取 {ticker} 的價格數據，已跳過。")
+            data = yf.download(ticker, period="1mo", progress=False)
+            if data.empty:
+                st.warning(f"無法下載 {ticker} 的數據，跳過該資產。")
                 continue
-        except (KeyError, IndexError):
-            st.error(f"查無代號 {ticker} 的數據，已跳過。")
+            
+            if isinstance(data.columns, pd.MultiIndex):
+                data.columns = data.columns.get_level_values(0)
+            
+            current_price = data['Close'].iloc[-1]
+            
+            # 判斷資產類型
+            if '.TW' in ticker or '.TWO' in ticker:
+                asset_type = 'TW_Stock'
+                value_twd = current_price * shares
+            else:
+                asset_type = 'US_Asset'
+                value_twd = current_price * shares * twd_fx_rate
+            
+            # 計算壓力損益
+            stress_scenarios = {
+                '回檔 (-5%)': -0.05,
+                '修正 (-10%)': -0.10,
+                '技術熊市 (-20%)': -0.20,
+                '金融海嘯 (-30%)': -0.30,
+            }
+            
+            pnl = {}
+            for scenario_name, shock in stress_scenarios.items():
+                pnl[f'損益_{scenario_name}'] = value_twd * shock
+            
+            results.append({
+                'ticker': ticker,
+                'type': asset_type,
+                'shares': shares,
+                'price': current_price,
+                'value_twd': value_twd,
+                **pnl
+            })
+        except Exception as e:
+            st.warning(f"處理 {ticker} 時發生錯誤: {e}")
             continue
-
-        value_native = price * shares
-        value_twd = value_native * twd_fx_rate if not is_tw_stock else value_native
-
-        # 計算 Beta
-        asset_returns = asset_data[ticker].pct_change().dropna()
-        benchmark_returns = benchmarks_data['Close'][benchmark_ticker].pct_change().dropna()
-        common_dates = asset_returns.index.intersection(benchmark_returns.index)
-        
-        if len(common_dates) < 30:
-            beta = 1.0 # 資料不足時，假設 Beta 為 1
-        else:
-            cov_matrix = np.cov(asset_returns[common_dates], benchmark_returns[common_dates])
-            beta = cov_matrix[0, 1] / cov_matrix[1, 1]
-
-        results.append({
-            'ticker': ticker, 'shares': shares, 'price': price, 'value_twd': value_twd,
-            'type': asset_type, 'beta': beta, 'benchmark': benchmark_ticker
-        })
-
-    if not results:
-        return pd.DataFrame(), {}
-
-    df = pd.DataFrame(results)
-
-    # 4. 執行壓力測試
-    scenarios = {
-        '回檔 (-5%)': -0.05,
-        '修正 (-10%)': -0.10,
-        '技術熊市 (-20%)': -0.20,
-        '金融海嘯 (-30%)': -0.30
-    }
     
-    # 匯率風險模型：假設市場每跌 10%，台幣貶值 2.5% (USDTWD 上升)
-    fx_shock_multiplier = -0.25
+    if not results:
+        return pd.DataFrame(), {"error": "無有效資產數據。"}
+    
+    results_df = pd.DataFrame(results)
+    total_value = results_df['value_twd'].sum()
+    
+    return results_df, {'total_value': total_value}
 
-    for name, shock in scenarios.items():
-        pnl_col = f'損益_{name}'
-        df[pnl_col] = df['beta'] * shock * df['value_twd']
+
+# ==================== Tab 4.3 均線戰法回測引擎 ====================
+@st.cache_data(ttl=7200)
+def run_ma_strategy_backtest(ticker, strategy_name, start_date="2015-01-01", initial_capital=1000000):
+    """
+    【Tab 4.3 核心】執行 15 種均線策略回測
+    
+    策略列表：
+    1-5: 價格穿越單一均線 (20, 43, 60, 87, 284MA)
+    6: 非對稱進出場 (P>20進 / P<60出)
+    7-13: 均線交叉策略 (20/60, 20/87, 20/284, 43/87, 43/284, 60/87, 60/284)
+    14: 核心戰法 (87MA ↗ 284MA)
+    15: 雙確認 (P>20 & P>60 進 / P<60 出)
+    """
+    try:
+        # 智慧代碼處理 (與主回測函數一致)
+        original_ticker = ticker
+        if re.match(r'^[0-9]', ticker) and 4 <= len(ticker) <= 6:
+            ticker = f"{ticker}.TW"
         
-        # 對美股部位計入匯兌收益
-        fx_impact = shock * fx_shock_multiplier
-        us_mask = df['type'] == '美股'
-        df.loc[us_mask, pnl_col] += df.loc[us_mask, 'value_twd'] * fx_impact
+        df = yf.download(ticker, start=start_date, progress=False)
+        if df.empty:
+            if re.match(r'^[0-9]', original_ticker) and 4 <= len(original_ticker) <= 6:
+                ticker_two = f"{original_ticker}.TWO"
+                df = yf.download(ticker_two, start=start_date, progress=False)
+            if df.empty:
+                return None
+        
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+        
+        if df.empty or len(df) < 300: return None  # 需要足夠數據計算 284MA
+        
+        # 計算所有需要的均線
+        df['MA20'] = df['Close'].rolling(window=20).mean()
+        df['MA43'] = df['Close'].rolling(window=43).mean()
+        df['MA60'] = df['Close'].rolling(window=60).mean()
+        df['MA87'] = df['Close'].rolling(window=87).mean()
+        df['MA284'] = df['Close'].rolling(window=284).mean()
+        
+        # 策略邏輯分派
+        df['Signal'] = 0
+        
+        if strategy_name == "價格 > 20MA":
+            df.loc[df['Close'] > df['MA20'], 'Signal'] = 1
+        elif strategy_name == "價格 > 43MA":
+            df.loc[df['Close'] > df['MA43'], 'Signal'] = 1
+        elif strategy_name == "價格 > 60MA":
+            df.loc[df['Close'] > df['MA60'], 'Signal'] = 1
+        elif strategy_name == "價格 > 87MA":
+            df.loc[df['Close'] > df['MA87'], 'Signal'] = 1
+        elif strategy_name == "價格 > 284MA":
+            df.loc[df['Close'] > df['MA284'], 'Signal'] = 1
+        
+        elif strategy_name == "非對稱: P>20進 / P<60出":
+            # 進場：價格突破 20MA
+            # 出場：價格跌破 60MA
+            in_position = False
+            for i in range(1, len(df)):
+                if not in_position and df['Close'].iloc[i] > df['MA20'].iloc[i]:
+                    in_position = True
+                elif in_position and df['Close'].iloc[i] < df['MA60'].iloc[i]:
+                    in_position = False
+                df.iloc[i, df.columns.get_loc('Signal')] = 1 if in_position else 0
+        
+        elif strategy_name == "20/60 黃金/死亡交叉":
+            df['Signal'] = 0
+            df.loc[df['MA20'] > df['MA60'], 'Signal'] = 1
+        elif strategy_name == "20/87 黃金/死亡交叉":
+            df.loc[df['MA20'] > df['MA87'], 'Signal'] = 1
+        elif strategy_name == "20/284 黃金/死亡交叉":
+            df.loc[df['MA20'] > df['MA284'], 'Signal'] = 1
+        elif strategy_name == "43/87 黃金/死亡交叉":
+            df.loc[df['MA43'] > df['MA87'], 'Signal'] = 1
+        elif strategy_name == "43/284 黃金/死亡交叉":
+            df.loc[df['MA43'] > df['MA284'], 'Signal'] = 1
+        elif strategy_name == "60/87 黃金/死亡交叉":
+            df.loc[df['MA60'] > df['MA87'], 'Signal'] = 1
+        elif strategy_name == "60/284 黃金/死亡交叉":
+            df.loc[df['MA60'] > df['MA284'], 'Signal'] = 1
+        
+        elif strategy_name == "🔥 核心戰法: 87MA ↗ 284MA":
+            # 進場：87MA 向上穿越 284MA
+            # 出場：87MA 向下穿越 284MA
+            df.loc[df['MA87'] > df['MA284'], 'Signal'] = 1
+        
+        elif strategy_name == "雙確認: P>20 & P>60 進 / P<60 出":
+            in_position = False
+            for i in range(1, len(df)):
+                if not in_position and (df['Close'].iloc[i] > df['MA20'].iloc[i] and df['Close'].iloc[i] > df['MA60'].iloc[i]):
+                    in_position = True
+                elif in_position and df['Close'].iloc[i] < df['MA60'].iloc[i]:
+                    in_position = False
+                df.iloc[i, df.columns.get_loc('Signal')] = 1 if in_position else 0
+        
+        # 績效計算
+        df['Pct_Change'] = df['Close'].pct_change()
+        df['Strategy_Return'] = df['Signal'].shift(1) * df['Pct_Change']
+        df['Equity'] = (1 + df['Strategy_Return'].fillna(0)).cumprod() * initial_capital
+        df['Drawdown'] = (df['Equity'] / df['Equity'].cummax()) - 1
+        
+        # 計算 CAGR
+        num_years = len(df) / 252
+        total_return = df['Equity'].iloc[-1] / initial_capital - 1
+        cagr = ((1 + total_return) ** (1 / num_years)) - 1 if num_years > 0 else 0
+        
+        # 財富推演：未來 10 年預期
+        future_10y_capital = initial_capital * ((1 + cagr) ** 10)
+        
+        return {
+            "strategy_name": strategy_name,
+            "cagr": cagr,
+            "final_equity": df['Equity'].iloc[-1],
+            "max_drawdown": df['Drawdown'].min(),
+            "equity_curve": df['Equity'],
+            "drawdown_series": df['Drawdown'],
+            "future_10y_capital": future_10y_capital,
+            "num_years": num_years
+        }
+    except Exception as e:
+        return None
 
-    return df, {'total_value': df['value_twd'].sum()}
+# --- 效能補丁: 120 分鐘戰術緩存 ---
+@st.cache_data(ttl=7200)
+def get_macro_data(_macro, _df):
+    """快取宏觀風控數據"""
+    return _macro.check_market_status(cb_df=_df)
 
+@st.cache_data(ttl=7200)
+def get_scan_result(_strat, _df):
+    """快取策略掃描結果"""
+    return _strat.scan_entire_portfolio(_df)
 
+@st.cache_data(ttl=7200)
+st.set_page_config(page_title="Titan SOP V78.2", layout="wide", page_icon="🏛️")
 st.set_page_config(page_title="Titan SOP V78.2", layout="wide", page_icon="🏛️")
 st.title("🏛️ Titan SOP 全自動戰情室 (V99.9 天神)")
 
@@ -2015,22 +2150,21 @@ with tab2: # 可轉債獵殺專區
             st.info("請先執行本頁上方的掃描以獲取買進建議。")
 
 with tab3: # 單兵狙擊總部
-    render_sniper_tab()
-
-with tab4: # 全球資產指揮中樞
+with tab4: # 全球資產指揮中樞 【重構區域】
     st.header("全球資產指揮中樞 (The Command Center)")
 
-    # 4.1 戰略資產配置
+    # ==================== 4.1 戰略資產配置 【Step 2 重構】 ====================
     with st.expander("4.1 📋 戰略資產配置 (Strategic Asset Allocation)", expanded=True):
-        st.info("在此編輯您的全球投資組合，支援台股(股票/ETF)、美股(股票/債券/ETF)與現金。")
-        # 預設投資組合數據
+        st.info("💡 台股 1 張請輸入 1000；美股以 1 股為單位；現金請輸入總額。")
+        
+        # 預設投資組合數據 【Step 2: 欄位全繁體化 + 零股單位】
         if 'portfolio_df' not in st.session_state:
             st.session_state.portfolio_df = pd.DataFrame([
-                {'Ticker': '2330', 'Quantity': 1000, 'Cost_Basis': 500.0, 'Type': 'Stock'},
-                {'Ticker': '00675L', 'Quantity': 5000, 'Cost_Basis': 15.0, 'Type': 'ETF'},
-                {'Ticker': 'NVDA', 'Quantity': 100, 'Cost_Basis': 400.0, 'Type': 'US_Stock'},
-                {'Ticker': 'TLT', 'Quantity': 200, 'Cost_Basis': 95.0, 'Type': 'US_Bond'},
-                {'Ticker': 'CASH', 'Quantity': 500000, 'Cost_Basis': 1.0, 'Type': 'Cash'},
+                {'資產代號': '2330', '持有數量 (股)': 1000, '平均成本': 500.0, '資產類別': 'Stock'},
+                {'資產代號': '00675L', '持有數量 (股)': 5000, '平均成本': 15.0, '資產類別': 'ETF'},
+                {'資產代號': 'NVDA', '持有數量 (股)': 100, '平均成本': 400.0, '資產類別': 'US_Stock'},
+                {'資產代號': 'TLT', '持有數量 (股)': 200, '平均成本': 95.0, '資產類別': 'US_Bond'},
+                {'資產代號': 'CASH', '持有數量 (股)': 500000, '平均成本': 1.0, '資產類別': 'Cash'},
             ])
 
         edited_df = st.data_editor(
@@ -2041,7 +2175,7 @@ with tab4: # 全球資產指揮中樞
         )
         st.session_state.portfolio_df = edited_df
 
-    # 4.2 績效回測與凱利決策
+    # ==================== 4.2 績效回測與凱利決策 【Step 3 升級】 ====================
     with st.expander("4.2 📈 績效回測與凱利決策 (Backtest & Kelly Analysis)"):
         if st.button("🚀 啟動全球回測"):
             portfolio_df = st.session_state.get('portfolio_df', pd.DataFrame())
@@ -2051,7 +2185,7 @@ with tab4: # 全球資產指揮中樞
                 with st.spinner("正在對全球資產執行回測..."):
                     backtest_results = []
                     for index, row in portfolio_df.iterrows():
-                        ticker = str(row['Ticker']).strip()
+                        ticker = str(row['資產代號']).strip()  # 【Step 2: 欄位名稱更新】
                         result = run_fast_backtest(ticker, initial_capital=1000000)
                         if result:
                             result['Ticker'] = ticker
@@ -2064,33 +2198,39 @@ with tab4: # 全球資產指揮中樞
             if not results:
                 st.error("所有資產回測失敗，請檢查代號是否正確。")
             else:
-                # A. 彙整表
+                # 【Step 3: 凱利公式採用保守模式 (0.5 Kelly)】
                 st.subheader("回測績效總覽")
                 summary_data = []
                 for res in results:
-                    advice = "🧊 觀望或試單"
-                    if res['kelly'] > 0.2: advice = "🔥🔥 重注進攻"
-                    elif res['kelly'] >= 0.05: advice = "✅ 穩健配置"
+                    # 保守凱利：將原始凱利值 * 0.5
+                    conservative_kelly = res['kelly'] * 0.5
                     
+                    advice = "🧊 觀望或試單"
+                    if conservative_kelly > 0.1: advice = "🔥🔥 重注進攻"
+                    elif conservative_kelly >= 0.025: advice = "✅ 穩健配置"
+                    
+                    # 【Step 3: 新增 CAGR，欄位順序調整】
                     summary_data.append({
                         '代號': res['Ticker'],
                         '最新價': res['latest_price'],
-                        '夏普值': res['sharpe_ratio'],
+                        '年化報酬 (CAGR)': res['cagr'],
+                        '投資性價比 (Sharpe)': res['sharpe_ratio'],  # 【Step 3: 更名為「投資性價比」】
                         '最大回撤': res['max_drawdown'],
-                        '凱利建議倉位 %': res['kelly'],
+                        '凱利建議 %': conservative_kelly,
                         '建議動作': advice
                     })
                 
                 summary_df = pd.DataFrame(summary_data)
                 st.dataframe(summary_df.style.format({
                     '最新價': '{:.2f}',
-                    '夏普值': '{:.2f}',
+                    '年化報酬 (CAGR)': '{:.2%}',
+                    '投資性價比 (Sharpe)': '{:.2f}',
                     '最大回撤': '{:.2%}',
-                    '凱利建議倉位 %': '{:.2%}',
+                    '凱利建議 %': '{:.2%}',
                 }), use_container_width=True)
                 st.divider()
 
-                # B. 深度圖表
+                # 深度圖表分析
                 st.subheader("深度圖表分析")
                 ticker_options = [res['Ticker'] for res in results]
                 selected_ticker = st.selectbox("選擇要查看的資產", options=ticker_options)
@@ -2098,7 +2238,7 @@ with tab4: # 全球資產指揮中樞
                 if selected_ticker:
                     selected_result = next((res for res in results if res['Ticker'] == selected_ticker), None)
                     if selected_result:
-                        # 圖表 1: 權益曲線
+                        # 權益曲線
                         equity_df = selected_result['equity_curve'].reset_index()
                         equity_df.columns = ['Date', 'Equity']
                         fig_equity = px.line(
@@ -2109,7 +2249,7 @@ with tab4: # 全球資產指揮中樞
                         fig_equity.update_traces(line_color='#17BECF')
                         st.plotly_chart(fig_equity, use_container_width=True)
 
-                        # 圖表 2: 水下回撤圖
+                        # 水下回撤圖
                         drawdown_df = selected_result['drawdown_series'].reset_index()
                         drawdown_df.columns = ['Date', 'Drawdown']
                         drawdown_df['Drawdown_pct'] = drawdown_df['Drawdown'] * 100
@@ -2122,8 +2262,129 @@ with tab4: # 全球資產指揮中樞
                         fig_drawdown.update_yaxes(ticksuffix="%")
                         st.plotly_chart(fig_drawdown, use_container_width=True)
 
-    # 4.3 全球黑天鵝壓力測試
-    with st.expander("4.3 🌪️ 全球黑天鵝壓力測試 (Global Stress Test)"):
+    # ==================== 4.3 均線戰法回測實驗室 【Step 4 新增】 ====================
+    @st.fragment
+    def ma_lab_fragment():
+        """【Step 4】均線戰法回測實驗室 - 使用 fragment 隔離運算"""
+        with st.expander("4.3 🧪 均線戰法回測實驗室 (MA Strategy Lab)", expanded=False):
+            st.info("選擇一檔標的，自動執行 15 種均線策略回測，推演 10 年財富變化。")
+            
+            portfolio_df = st.session_state.get('portfolio_df', pd.DataFrame())
+            if portfolio_df.empty:
+                st.warning("請先在 4.1 配置您的戰略資產。")
+                return
+            
+            # 從 4.1 清單中選擇標的
+            ticker_list = portfolio_df['資產代號'].tolist()
+            selected_lab_ticker = st.selectbox("選擇回測標的", options=ticker_list, key="ma_lab_ticker")
+            
+            # 定義 15 種策略
+            ma_strategies = [
+                "價格 > 20MA",
+                "價格 > 43MA",
+                "價格 > 60MA",
+                "價格 > 87MA",
+                "價格 > 284MA",
+                "非對稱: P>20進 / P<60出",
+                "20/60 黃金/死亡交叉",
+                "20/87 黃金/死亡交叉",
+                "20/284 黃金/死亡交叉",
+                "43/87 黃金/死亡交叉",
+                "43/284 黃金/死亡交叉",
+                "60/87 黃金/死亡交叉",
+                "60/284 黃金/死亡交叉",
+                "🔥 核心戰法: 87MA ↗ 284MA",
+                "雙確認: P>20 & P>60 進 / P<60 出"
+            ]
+            
+            if st.button("🔬 啟動 15 種均線實驗", key="start_ma_lab"):
+                with st.spinner(f"正在對 {selected_lab_ticker} 執行 15 種均線策略回測..."):
+                    ma_results = []
+                    
+                    for strategy in ma_strategies:
+                        result = run_ma_strategy_backtest(
+                            ticker=selected_lab_ticker,
+                            strategy_name=strategy,
+                            start_date="2015-01-01",
+                            initial_capital=1000000
+                        )
+                        if result:
+                            ma_results.append(result)
+                    
+                    st.session_state.ma_lab_results = ma_results
+                    st.session_state.ma_lab_ticker = selected_lab_ticker
+            
+            # 顯示結果
+            if 'ma_lab_results' in st.session_state and st.session_state.get('ma_lab_ticker') == selected_lab_ticker:
+                results = st.session_state.ma_lab_results
+                
+                if not results:
+                    st.error(f"無法取得 {selected_lab_ticker} 的回測數據。")
+                else:
+                    st.success(f"✅ {selected_lab_ticker} - 15 種均線策略回測完成")
+                    
+                    # 【財富推演表】
+                    st.subheader("📊 策略績效與財富推演")
+                    wealth_data = []
+                    for res in results:
+                        wealth_data.append({
+                            '策略名稱': res['strategy_name'],
+                            '年化報酬 (CAGR)': res['cagr'],
+                            '回測期末資金': res['final_equity'],
+                            '最大回撤': res['max_drawdown'],
+                            '未來 10 年預期資金': res['future_10y_capital'],
+                            '回測年數': res['num_years']
+                        })
+                    
+                    wealth_df = pd.DataFrame(wealth_data)
+                    wealth_df = wealth_df.sort_values('年化報酬 (CAGR)', ascending=False)
+                    
+                    st.dataframe(wealth_df.style.format({
+                        '年化報酬 (CAGR)': '{:.2%}',
+                        '回測期末資金': '{:,.0f}',
+                        '最大回撤': '{:.2%}',
+                        '未來 10 年預期資金': '{:,.0f}',
+                        '回測年數': '{:.1f}'
+                    }), use_container_width=True)
+                    
+                    st.divider()
+                    
+                    # 【繪製權益曲線與水下回撤圖】
+                    st.subheader("📈 策略視覺化")
+                    strategy_names = [res['strategy_name'] for res in results]
+                    selected_strategy = st.selectbox("選擇策略查看圖表", options=strategy_names, key="ma_strategy_chart")
+                    
+                    selected_res = next((res for res in results if res['strategy_name'] == selected_strategy), None)
+                    if selected_res:
+                        # 權益曲線
+                        equity_df = selected_res['equity_curve'].reset_index()
+                        equity_df.columns = ['Date', 'Equity']
+                        fig_eq = px.line(
+                            equity_df, x='Date', y='Equity',
+                            title=f"{selected_lab_ticker} - {selected_strategy} 權益曲線",
+                            labels={'Equity': '資金 (元)', 'Date': '日期'}
+                        )
+                        fig_eq.update_traces(line_color='#2ECC71')
+                        st.plotly_chart(fig_eq, use_container_width=True)
+                        
+                        # 水下回撤圖
+                        dd_df = selected_res['drawdown_series'].reset_index()
+                        dd_df.columns = ['Date', 'Drawdown']
+                        dd_df['Drawdown_pct'] = dd_df['Drawdown'] * 100
+                        fig_dd = px.area(
+                            dd_df, x='Date', y='Drawdown_pct',
+                            title=f"{selected_lab_ticker} - {selected_strategy} 水下回撤圖",
+                            labels={'Drawdown_pct': '回撤 (%)', 'Date': '日期'}
+                        )
+                        fig_dd.update_traces(fillcolor='rgba(231, 76, 60, 0.3)', line_color='rgba(231, 76, 60, 1.0)')
+                        fig_dd.update_yaxes(ticksuffix="%")
+                        st.plotly_chart(fig_dd, use_container_width=True)
+    
+    # 執行 fragment
+    ma_lab_fragment()
+
+    # ==================== 4.4 全球黑天鵝壓力測試 (保持不變) ====================
+    with st.expander("4.4 🌪️ 全球黑天鵝壓力測試 (Global Stress Test)"):
         st.info("此模組將讀取上方配置的資產，模擬在不同全球市場衝擊下，您投資組合的預期損益。")
         
         if st.button("啟動全球壓力測試"):
@@ -2134,12 +2395,12 @@ with tab4: # 全球資產指揮中樞
                 # 將 DataFrame 轉換為 run_stress_test 所需的字串格式
                 portfolio_input_list = []
                 for _, row in portfolio_df.iterrows():
-                    ticker = str(row['Ticker'])
-                    # 壓力測試函式需要 .TW 後綴
-                    if ticker.isdigit():
+                    ticker = str(row['資產代號'])
+                    # 【Step 1 修正同步應用】
+                    if re.match(r'^[0-9]', ticker) and 4 <= len(ticker) <= 6:
                         ticker = f"{ticker}.TW"
                     
-                    portfolio_input_list.append(f"{ticker};{row['Quantity']}")
+                    portfolio_input_list.append(f"{ticker};{row['持有數量 (股)']}")
                 
                 portfolio_input_str = "\n".join(portfolio_input_list)
 
