@@ -211,8 +211,7 @@ def get_scan_result(_strat, _df):
 @st.cache_data(ttl=7200)
 def run_stress_test(portfolio_text):
     """
-    執行全球黑天鵝壓力測試並緩存結果。
-    13F Institutional Level Logic.
+    [V82.1 FIX] 全球黑天鵝壓力測試 (含台股智慧識別)
     """
     # 1. 解析輸入
     lines = [line.strip() for line in portfolio_text.split('\n') if line.strip()]
@@ -228,6 +227,7 @@ def run_stress_test(portfolio_text):
         parts = [p.strip() for p in item.split(';')]
         if len(parts) == 2 and parts[1]:
             try:
+                # 這裡保留原始輸入，稍後在下載時處理
                 portfolio.append({'ticker': parts[0].upper(), 'shares': float(parts[1])})
             except ValueError:
                 st.warning(f"跳過無效項目: {item}")
@@ -241,19 +241,25 @@ def run_stress_test(portfolio_text):
         benchmarks_data = yf.download(['^TWII', '^GSPC', 'USDTWD=X'], period="1y", progress=False)
         if benchmarks_data.empty:
             return pd.DataFrame(), {"error": "無法下載市場基準數據 (^TWII, ^GSPC)。"}
-        twd_fx_rate = benchmarks_data['Close']['USDTWD=X'].iloc[-1]
+        # 處理 MultiIndex
+        if isinstance(benchmarks_data.columns, pd.MultiIndex):
+            twd_fx_rate = benchmarks_data['Close']['USDTWD=X'].iloc[-1]
+        else:
+            twd_fx_rate = benchmarks_data['USDTWD=X'].iloc[-1]
     except Exception as e:
         return pd.DataFrame(), {"error": f"下載市場數據失敗: {e}"}
 
     # 3. 處理每個資產
     results = []
     for asset in portfolio:
-        ticker = asset['ticker']
+        original_ticker = asset['ticker']
         shares = asset['shares']
+        ticker = original_ticker # 用於下載的代號
         
-        if ticker in ['CASH', 'USD', 'TWD']:
+        # [現金處理]
+        if original_ticker in ['CASH', 'USD', 'TWD']:
             results.append({
-                'ticker': ticker,
+                'ticker': original_ticker,
                 'type': 'Cash',
                 'shares': shares,
                 'price': 1.0,
@@ -265,10 +271,25 @@ def run_stress_test(portfolio_text):
             })
             continue
         
+        # [V82.1 關鍵修復] 台股智慧識別邏輯
+        # 如果是純數字且長度為 4-6 碼，自動嘗試加 .TW 或 .TWO
+        import re
+        is_tw_stock = False
+        if re.match(r'^[0-9]', original_ticker) and 4 <= len(original_ticker) <= 6:
+            ticker = f"{original_ticker}.TW"
+            is_tw_stock = True
+
         try:
+            # 下載數據
             data = yf.download(ticker, period="1mo", progress=False)
+            
+            # 如果 .TW 失敗，嘗試 .TWO
+            if data.empty and is_tw_stock:
+                ticker = f"{original_ticker}.TWO"
+                data = yf.download(ticker, period="1mo", progress=False)
+            
             if data.empty:
-                st.warning(f"無法下載 {ticker} 的數據，跳過該資產。")
+                st.warning(f"無法下載 {original_ticker} 的數據，跳過該資產。")
                 continue
             
             if isinstance(data.columns, pd.MultiIndex):
@@ -276,8 +297,8 @@ def run_stress_test(portfolio_text):
             
             current_price = data['Close'].iloc[-1]
             
-            # 判斷資產類型
-            if '.TW' in ticker or '.TWO' in ticker:
+            # 判斷資產類型 (用於匯率計算)
+            if '.TW' in ticker or '.TWO' in ticker or is_tw_stock:
                 asset_type = 'TW_Stock'
                 value_twd = current_price * shares
             else:
@@ -297,7 +318,7 @@ def run_stress_test(portfolio_text):
                 pnl[f'損益_{scenario_name}'] = value_twd * shock
             
             results.append({
-                'ticker': ticker,
+                'ticker': original_ticker,
                 'type': asset_type,
                 'shares': shares,
                 'price': current_price,
@@ -305,7 +326,7 @@ def run_stress_test(portfolio_text):
                 **pnl
             })
         except Exception as e:
-            st.warning(f"處理 {ticker} 時發生錯誤: {e}")
+            st.warning(f"處理 {original_ticker} 時發生錯誤: {e}")
             continue
     
     if not results:
@@ -2568,121 +2589,146 @@ def render_data():
         else:
             st.info("請上傳 CB 清單以掃描時間套利事件。")
 
-# --- 🧠 元趨勢戰法 (Meta-Trend) [V82.0 RECONSTRUCTED] ---
+# --- 🧠 元趨勢戰法 (Meta-Trend) [V82.1 幾何引擎啟動版] ---
 @st.fragment
 def render_meta_trend():
-    if st.button("🏠 返回戰情總部"):
+    if st.button("🏠 返回戰情總部", key="btn_return_meta"):
         st.session_state.page = 'home'
         st.rerun()
     st.title("🧠 元趨勢戰法開發母港 (Meta-Trend Genesis)")
-
-    # =================================================================
-    # 核心方法論：上帝視角協議 (The "God's Eye" Protocol) - V82.0
-    # -----------------------------------------------------------------
-    # 本協議為元趨勢戰法的數學與哲學基礎，旨在透過極長時間尺度的
-    # 幾何分析，識別出資產的生命週期階段與趨勢的真實「加速度」。
-    #
-    # 1. 時間跨度 (Time Horizon):
-    #    - 全景視角 (Panoramic View): 鎖定 1990-2026 (35年) 的月K線數據。
-    #      此跨度涵蓋了網路泡沫、金融海嘯、後QE時代與AI崛起，
-    #      足以形成對資產「性格」的完整觀察。
-    #    - 局部變異 (Local Variance): 同時計算最近 5 年的軌跡，
-    #      用於偵測長期趨勢中的短期「加速度」或「失速」現象。
-    #
-    # 2. 角度分級 (9-Gear Shift System):
-    #    - 核心算法: 對數價格 (Log Price) 進行時間序列上的線性回歸，
-    #      取其斜率 (Slope)，再透過反正切函數 (Arctan) 轉換為視覺角度。
-    #      此方法能將指數級增長的價格行為，轉化為線性的角度變化，
-    #      更直觀地呈現趨勢強度。
-    #    - 9檔位定義:
-    #      1. 🔻 毀滅崩盤 (Crash): < -45°
-    #         (特徵: 恐慌性拋售，斜率極度為負，如 2008 年的金融股)
-    #      2. ↘️ 空頭修正 (Correction): -45° ~ -10°
-    #         (特徵: 明確的下降通道，反彈無力，高點不斷降低)
-    #      3. 😴 殭屍盤整 (Dormant): -10° ~ +10°
-    #         (特徵: 長時間橫盤，失去市場關注，成交量萎縮，等待催化劑)
-    #      4. 🌱 復甦萌芽 (Awakening): +10° ~ +25°
-    #         (特徵: 醜小鴨階段。底部逐漸墊高，開始出現試探性買盤)
-    #      5. 🛡️ 穩健長多 (Steady): +25° ~ +40°
-    #         (特徵: 價值型護城河。如微軟、可口可樂，穩定增長，抗波動)
-    #      6. 📈 成長主力 (Growth): +40° ~ +55°
-    #         (特徵: 趨勢的核心階段，戴維斯雙擊，營收與估值同步擴張)
-    #      7. 🚀 強力加速 (Turbo): +55° ~ +70°
-    #         (特徵: 主升段，市場共識形成，吸引大量追價買盤)
-    #      8. 🔥 拋物線噴出 (Parabolic): +70° ~ +85°
-    #         (特徵: 泡沫化初期，脫離基本面，情緒驅動。如 2024 年的 PLTR)
-    #      9. ⚠️ 垂直極限 (Vertical Limit): > 85°
-    #         (特徵: 趨勢終點前的最後瘋狂，斜率趨近垂直，風險極高)
-    # =================================================================
-
-    st.info(
-        """
-        **歡迎來到元趨勢戰法開發母港 (V82.0)。**
-        
-        此區域為 Titan SOP 的次世代決策中樞，採用「插槽式架構」進行模組化開發。
-        下方各分頁代表一個獨立的功能模組，將逐步完成對接。
-        """
-    )
 
     tab1, tab2, tab3 = st.tabs(["📐 **幾何角度掃描**", "🗣️ **AI 參謀本部**", "📝 **獵殺清單管理**"])
 
     with tab1:
         st.header("📐 全景幾何掃描儀 (Panoramic Geometry Scanner)")
-        st.warning("🚧 模組建構中... 預計 V82.1 上線")
-        
-        st.subheader("1. 數據引擎")
-        st.info("此處將接入數據引擎，負責抓取並處理長週期數據。")
-        # [SLOT-6.1-DATA]: 數據引擎 (負責抓取 yfinance 1990-2026 月K資料與除權息清洗)。
-        st.code("# [SLOT-6.1-DATA] Placeholder: yfinance data ingestion and cleaning logic will be implemented here.", language="python")
+        st.info("💡 上帝視角協議已啟動：鎖定 1990-2026 全景數據，計算真實趨勢「加速度」。")
 
-        st.subheader("2. 幾何算法核心")
-        st.info("此處將接入核心算法，執行「上帝視角協議」的角度計算。")
-        # [SLOT-6.2-MATH]: 幾何算法核心 (實作上述 9 檔角度計算與加速度偵測)。
-        st.code("# [SLOT-6.2-MATH] Placeholder: 9-Gear Shift angle calculation and acceleration detection logic.", language="python")
+        col_in, col_btn = st.columns([3, 1])
+        with col_in:
+            target = st.text_input("輸入掃描代號 (如 2330, PLTR, MSFT)", value="2330")
+        with col_btn:
+            run_scan = st.button("🚀 啟動幾何運算", type="primary")
 
-        st.subheader("3. 視覺戰情室")
-        st.info("此處將接入視覺化模組，繪製 35 年全景圖與趨勢角度線。")
-        # [SLOT-6.6-VISUAL]: 視覺戰情室 (預留繪製 35 年全景圖與角度線的功能)。
-        st.code("# [SLOT-6.6-VISUAL] Placeholder: Altair/Plotly chart for 35-year panoramic view.", language="python")
+        if run_scan:
+            # =========================================================
+            # [SLOT-6.1-DATA] 數據引擎：35年全景抓取
+            # =========================================================
+            with st.spinner(f"正在提取 {target} 過去 35 年月K線數據..."):
+                try:
+                    # 智慧識別
+                    ticker = target.upper()
+                    if ticker.isdigit(): ticker = f"{ticker}.TW"
+                    
+                    # 下載月K線 (interval='1mo')
+                    # start='1990-01-01' 是為了符合您的 35 年全景要求
+                    df_meta = yf.download(ticker, start="1990-01-01", interval="1mo", progress=False)
+                    
+                    if df_meta.empty and ticker.endswith(".TW"):
+                         ticker = ticker.replace(".TW", ".TWO")
+                         df_meta = yf.download(ticker, start="1990-01-01", interval="1mo", progress=False)
+
+                    if isinstance(df_meta.columns, pd.MultiIndex):
+                        df_meta.columns = df_meta.columns.get_level_values(0)
+                    
+                    if len(df_meta) < 24:
+                        st.error("❌ 歷史數據不足 2 年，無法計算幾何角度。")
+                    else:
+                        # 數據清洗
+                        df_meta['Close'] = pd.to_numeric(df_meta['Close'], errors='coerce')
+                        df_meta = df_meta.dropna()
+
+                        # =========================================================
+                        # [SLOT-6.2-MATH] 幾何算法核心：God's Eye Protocol
+                        # =========================================================
+                        from scipy.stats import linregress
+                        import numpy as np
+                        
+                        # 定義計算函數：歸一化線性回歸角度
+                        def calculate_visual_angle(series):
+                            # 1. 歸一化 Y (Log Price) -> 消除高價股與低價股的差異
+                            y = np.log(series.values)
+                            # 2. 歸一化 X (Time) -> 映射到 0~1 區間
+                            x = np.linspace(0, 1, len(series))
+                            # 3. 計算斜率
+                            slope, _, _, _, _ = linregress(x, y)
+                            # 4. 轉換為角度 (Scaling Factor = 1.0, 可微調)
+                            # 這裡的邏輯：Slope=1 代表在觀察期間內翻倍 (e^1 ~= 2.7倍)
+                            # 為了符合人類視覺 (微軟約 45度)，我們將 Slope 乘上一個視覺係數
+                            visual_slope = slope * 2.0 
+                            angle_rad = np.arctan(visual_slope)
+                            angle_deg = np.degrees(angle_rad)
+                            return angle_deg
+
+                        # A. 全景角度 (The Arc) - 35年 (或最大區間)
+                        long_term_angle = calculate_visual_angle(df_meta['Close'])
+                        
+                        # B. 短期角度 (The Arrow) - 近 12 個月
+                        short_term_data = df_meta['Close'].iloc[-12:]
+                        short_term_angle = calculate_visual_angle(short_term_data)
+                        
+                        # C. 加速度 (Acceleration)
+                        acceleration = short_term_angle - long_term_angle
+
+                        # D. 9檔位判定
+                        def get_gear_status(angle):
+                            if angle > 85: return "9. ⚠️ 垂直極限 (Vertical Limit)", "#FF0000"
+                            if angle > 70: return "8. 🔥 拋物線噴出 (Parabolic)", "#FF4500"
+                            if angle > 55: return "7. 🚀 強力加速 (Turbo)", "#FF8C00"
+                            if angle > 40: return "6. 📈 成長主力 (Growth)", "#FFD700"
+                            if angle > 25: return "5. 🛡️ 穩健長多 (Steady)", "#32CD32"
+                            if angle > 10: return "4. 🌱 復甦萌芽 (Awakening)", "#00FA9A"
+                            if angle > -10: return "3. 😴 殭屍盤整 (Dormant)", "#808080"
+                            if angle > -45: return "2. ↘️ 空頭修正 (Correction)", "#4682B4"
+                            return "1. 🔻 毀滅崩盤 (Crash)", "#00008B"
+
+                        lt_status, lt_color = get_gear_status(long_term_angle)
+                        st_status, st_color = get_gear_status(short_term_angle)
+
+                        # =========================================================
+                        # [SLOT-6.6-VISUAL] 視覺戰情室
+                        # =========================================================
+                        st.markdown("### 🧬 幾何基因解碼 (Geometric DNA)")
+                        
+                        k1, k2, k3 = st.columns(3)
+                        k1.metric("全景角度 (35Y)", f"{long_term_angle:.1f}°", lt_status.split('.')[1])
+                        k2.metric("短期角度 (1Y)", f"{short_term_angle:.1f}°", st_status.split('.')[1])
+                        
+                        acc_label = "🚀 加速中" if acceleration > 5 else ("🐢 減速中" if acceleration < -5 else "➡️ 等速")
+                        k3.metric("趨勢加速度", f"{acceleration:+.1f}°", acc_label)
+
+                        st.markdown(f"""
+                        <div style="padding: 10px; border-radius: 5px; background-color: rgba(50, 50, 50, 0.5); border-left: 5px solid {st_color};">
+                            <h4>目前檔位：<span style="color:{st_color}">{st_status}</span></h4>
+                            <p>從長線 <b>{lt_status.split(' ')[1]}</b> ({long_term_angle:.1f}°) 轉變為短線 <b>{st_status.split(' ')[1]}</b> ({short_term_angle:.1f}°)。</p>
+                        </div>
+                        """, unsafe_allow_html=True)
+                        
+                        # 繪圖
+                        chart_data = df_meta.reset_index()[['Date', 'Close']]
+                        base = alt.Chart(chart_data).encode(x='Date:T')
+                        line = base.mark_line(color='#00FF00').encode(y=alt.Y('Close', scale=alt.Scale(type='log'), title='Log Price'))
+                        
+                        st.altair_chart(line.interactive(), use_container_width=True)
+                        st.caption("附註：Y軸採用對數座標 (Log Scale)，以呈現真實幾何斜率。")
+
+                except Exception as e:
+                    st.error(f"掃描失敗: {e}")
 
     with tab2:
         st.header("🗣️ AI 參謀本部 (AI General Staff)")
-        st.warning("🚧 模組建構中... 預計 V82.2 上線")
-
-        st.subheader("1. LLM 連接器")
-        st.info("此處將接入大型語言模型 API，作為 AI 參謀的大腦。")
-        # [SLOT-6.3-AGENT-LLM]: LLM 連接器 (預留 Gemini/Claude API 對話接口)。
-        st.code("# [SLOT-6.3-AGENT-LLM] Placeholder: Connection logic for Gemini/Claude APIs.", language="python")
-
-        st.subheader("2. 長期記憶庫 (RAG)")
-        st.info("此處將接入向量數據庫，為 AI 參謀提供財報、法說會、新聞等長期記憶。")
-        # [SLOT-6.4-AGENT-MEM]: 長期記憶庫 (預留 RAG 檢索，存儲財報與新聞)。
-        st.code("# [SLOT-6.4-AGENT-MEM] Placeholder: RAG implementation with Vector DB for long-term memory.", language="python")
-
-        st.subheader("3. 多智能體辯論核心")
-        st.info("此處將實現多頭、空頭、價值、成長等不同風格 AI 的辯論機制。")
-        # [SLOT-6.5-AGENT-DEBATE]: 多智能體辯論核心 (預留 TradingAgents 的多頭 vs 空頭邏輯)。
-        st.code("# [SLOT-6.5-AGENT-DEBATE] Placeholder: Multi-agent debate framework logic.", language="python")
-        
-        st.text_area("辯論結果輸出區", "AI 參謀辯論後的綜合報告將顯示於此...", height=200)
+        st.info("💡 這裡將部署：揉合 GitHub `TradingAgents` 邏輯的多智能體對抗系統。")
+        # [SLOT-6.3-AGENT-LLM] & [SLOT-6.5] 預留位置
+        st.code("Waiting for Agent Logic Integration...", language="python")
 
     with tab3:
-        st.header("📝 獵殺清單管理 (Kill List Management)")
-        st.warning("🚧 模組建構中... 預計 V82.3 上線")
-        
-        st.info("此處將管理由「幾何掃描」和「AI 辯論」篩選出的高潛力監控標的。")
-        # [SLOT-6.7-KILL-LIST]: 獵殺清單資料庫 (管理監控中的標的)。
-        st.code("# [SLOT-6.7-KILL-LIST] Placeholder: Database/State management for the kill list.", language="python")
-        
-        mock_data = {
-            '代號': ['NVDA', 'PLTR', 'TSM'],
-            '名稱': ['NVIDIA', 'Palantir', '台積電'],
-            '幾何角度': [78.5, 81.2, 48.9],
-            '角度檔位': ['🔥 拋物線噴出', '🔥 拋物線噴出', '📈 成長主力'],
-            'AI 評級': ['增持', '增持', '中立'],
-            '監控日期': ['2026-02-01', '2026-01-15', '2025-12-10']
-        }
-        st.dataframe(pd.DataFrame(mock_data))
+        st.header("📝 獵殺清單管理 (Kill List)")
+        st.info("💡 這裡將管理由「幾何掃描」和「AI 辯論」篩選出的高潛力監控標的。")
+        # [SLOT-6.7] 預留位置
+        st.dataframe(pd.DataFrame({
+            '代號': ['NVDA', 'PLTR', '2330'],
+            '幾何狀態': ['🔥 拋物線', '🔥 拋物線', '📈 成長'],
+            '加速度': ['+15.2°', '+20.5°', '+3.1°']
+        }))
 
 
 # --- 🏠 戰情指揮首頁 (Home) [V81.1 NEW] ---
