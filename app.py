@@ -44,73 +44,97 @@ kb, macro, strategy, intel, calendar, backtester = load_system()
 @st.cache_data(ttl=7200)
 def run_fast_backtest(ticker, start_date="2023-01-01", initial_capital=1000000):
     """
-    極速向量化回測引擎 (Vectorized Backtest Engine)
-    策略邏輯：模擬趨勢追蹤 (Trend Following) - 當收盤價 > 20日均線且成交量放大時買入
+    [UPGRADED] 極速向量化回測引擎 (Vectorized Backtest Engine)
+    策略邏輯：模擬趨勢追蹤 (Trend Following) - 當收盤價 > 20日均線時買入
+    支援：台股 (TW/TWO)、美股、現金 (CASH)
     """
     try:
-        # 1. 處理代碼 (自動補全 .TW/.TWO)
-        if not (ticker.endswith('.TW') or ticker.endswith('.TWO') or ticker.isalpha()):
-            # 簡單判斷：若為數字且無後綴，預設為 .TW (上市)，若找不到再試 .TWO? 這裡先預設 .TW
-            ticker = f"{ticker}.TW" 
+        # Handle CASH asset
+        if ticker.upper() in ['CASH', 'USD', 'TWD']:
+            dates = yf.download('^TWII', start=start_date, progress=False).index
+            if dates.empty: return None
+            df = pd.DataFrame(index=dates)
+            df['Close'] = 1.0
+            df['Strategy_Return'] = 0.0
+            df['Equity'] = initial_capital
+            df['Drawdown'] = 0.0
+            
+            return {
+                "cagr": 0.0, "sharpe_ratio": 0.0, "max_drawdown": 0.0,
+                "win_rate": 0.0, "profit_factor": 0.0, "kelly": 0.0,
+                "equity_curve": df['Equity'], "drawdown_series": df['Drawdown'],
+                "latest_price": 1.0
+            }
+
+        # 1. 智慧代碼處理 (自動補全 .TW/.TWO)
+        original_ticker = ticker
+        if ticker.isdigit():
+            ticker = f"{ticker}.TW"
         
         # 2. 下載數據
         df = yf.download(ticker, start=start_date, progress=False)
-        if df.empty: 
-            # 如果 .TW 失敗，嘗試 .TWO
-            if ticker.endswith('.TW'):
-                ticker_two = ticker.replace('.TW', '.TWO')
+        if df.empty:
+            if original_ticker.isdigit(): # 僅對數字代碼重試 .TWO
+                ticker_two = f"{original_ticker}.TWO"
                 df = yf.download(ticker_two, start=start_date, progress=False)
             if df.empty:
                 return None
         
-        # 若是 MultiIndex Columns (yfinance 新版)，扁平化處理
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
 
-        # 3. 策略信號生成 (Signal Generation)
-        # 模擬 SOP 邏輯：股價在 20MA 之上 (趨勢多)
+        if df.empty or len(df) < 21: return None
+
+        # 3. 策略信號生成
         df['MA20'] = df['Close'].rolling(window=20).mean()
         df['Signal'] = 0
-        # 當收盤 > 20MA 持有 (1), 否則空手 (0)
         df.loc[df['Close'] > df['MA20'], 'Signal'] = 1
         
-        # 4. 績效計算 (Vectorized)
+        # 4. 績效計算
         df['Pct_Change'] = df['Close'].pct_change()
-        # 策略回報 = 昨日信號 * 今日漲跌
         df['Strategy_Return'] = df['Signal'].shift(1) * df['Pct_Change']
-        
-        # 5. 凱利參數計算
-        # 過濾出有交易的日子
-        trade_days = df[df['Signal'].shift(1) == 1]
-        if len(trade_days) < 10: return None # 樣本不足
-
-        wins = trade_days[trade_days['Strategy_Return'] > 0]['Strategy_Return']
-        losses = trade_days[trade_days['Strategy_Return'] < 0]['Strategy_Return']
-        
-        win_rate = len(wins) / len(trade_days) if len(trade_days) > 0 else 0
-        avg_win = wins.mean() if len(wins) > 0 else 0
-        avg_loss = abs(losses.mean()) if len(losses) > 0 else 1
-        profit_factor = avg_win / avg_loss if avg_loss != 0 else 0
-        
-        # 凱利公式: f = (bp - q) / b = p - (q / b)
-        # b = profit_factor (賠率), p = win_rate, q = 1-p
-        if profit_factor > 0:
-            kelly = win_rate - ((1 - win_rate) / profit_factor)
-        else:
-            kelly = 0
-            
-        # 權益曲線
         df['Equity'] = (1 + df['Strategy_Return'].fillna(0)).cumprod() * initial_capital
         
+        # 5. 凱利參數計算
+        trade_days = df[df['Signal'].shift(1) == 1]
+        if len(trade_days) < 10:
+            win_rate, profit_factor, kelly = 0, 0, 0
+        else:
+            wins = trade_days[trade_days['Strategy_Return'] > 0]['Strategy_Return']
+            losses = trade_days[trade_days['Strategy_Return'] < 0]['Strategy_Return']
+            
+            win_rate = len(wins) / len(trade_days)
+            avg_win = wins.mean() if len(wins) > 0 else 0
+            avg_loss = abs(losses.mean()) if len(losses) > 0 else 1
+            profit_factor = avg_win / avg_loss if avg_loss != 0 else 0
+            
+            if profit_factor > 0:
+                kelly = win_rate - ((1 - win_rate) / profit_factor)
+            else:
+                kelly = 0
+        
+        # 6. 新增專業指標
+        df['Drawdown'] = (df['Equity'] / df['Equity'].cummax()) - 1
+        max_drawdown = df['Drawdown'].min()
+
+        num_years = len(df) / 252
+        total_return = df['Equity'].iloc[-1] / initial_capital - 1
+        cagr = ((1 + total_return) ** (1 / num_years)) - 1 if num_years > 0 else 0
+
+        risk_free_rate = 0.02
+        daily_returns = df['Strategy_Return'].dropna()
+        if daily_returns.std() > 0:
+            sharpe_ratio = (daily_returns.mean() * 252 - risk_free_rate) / (daily_returns.std() * np.sqrt(252))
+        else:
+            sharpe_ratio = 0.0
+
         return {
-            "win_rate": win_rate,
-            "profit_factor": profit_factor,
-            "kelly": max(0, kelly), # 負值歸零
-            "total_return": df['Equity'].iloc[-1] / initial_capital - 1,
-            "max_drawdown": (df['Equity'] / df['Equity'].cummax() - 1).min(),
-            "equity_curve": df['Equity']
+            "cagr": cagr, "sharpe_ratio": sharpe_ratio, "max_drawdown": max_drawdown,
+            "win_rate": win_rate, "profit_factor": profit_factor, "kelly": max(0, kelly),
+            "equity_curve": df['Equity'], "drawdown_series": df['Drawdown'],
+            "latest_price": df['Close'].iloc[-1]
         }
-    except Exception as e:
+    except Exception:
         return None
 
 # --- 效能補丁: 120 分鐘戰術緩存 ---
@@ -1009,7 +1033,7 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "🛡️ 宏觀大盤",   # Tab 1: Macro Dashboard
     "🏹 獵殺專區",   # Tab 2: Hunter Zone (SOP)
     "🎯 單兵狙擊",   # Tab 3: Sniper HQ
-    "🚀 戰力升級",   # Tab 4: Upgrade & Stress Test
+    "🚀 全球決策",   # Tab 4: Global Command Center
     "📚 戰略百科"    # Tab 5: Encyclopedia
 ])
 
@@ -1989,167 +2013,179 @@ with tab2: # 可轉債獵殺專區
                 st.info("目前無符合 SOP 標準之標的。")
         else:
             st.info("請先執行本頁上方的掃描以獲取買進建議。")
-        
-    with st.expander("2.5 歷史回測驗證 (Strategy Backtest)", expanded=False):
-        st.info("對指定標的進行過去一年的回測，模擬『收盤價站上 20MA 買進、跌破賣出』的績效。")
-        backtest_ticker = st.text_input("輸入回測代號", value="2330")
-
-        if st.button("🚀 啟動極速回測"):
-            with st.spinner(f"正在為 {backtest_ticker} 執行向量化回測..."):
-                result = run_fast_backtest(backtest_ticker)
-                
-                if result:
-                    st.subheader(f"📈 回測績效報告: {backtest_ticker}")
-                    c1, c2, c3 = st.columns(3)
-                    c1.metric("勝率 (Win Rate)", f"{result['win_rate']:.2%}")
-                    c2.metric("盈虧比 (Profit Factor)", f"{result['profit_factor']:.2f}")
-                    c3.metric("凱利建議倉位 (Kelly %)", f"{result['kelly']:.2%}")
-                    
-                    st.subheader("權益曲線 (Equity Curve)")
-                    st.line_chart(result['equity_curve'])
-                else:
-                    st.error(f"回測失敗。請檢查代號 '{backtest_ticker}' 是否正確，或該時段內是否有足夠數據。")
 
 with tab3: # 單兵狙擊總部
     render_sniper_tab()
 
-with tab4: # 戰力升級
-    with st.expander("4.1 全球黑天鵝壓力測試 (13F Institutional Level)", expanded=False):
-        st.info("此模組模擬在不同全球市場衝擊下，您投資組合的預期損益。")
-        
-        portfolio_example = (
-            "AAPL;100\n"
-            "2330.TW;1000\n"
-            "NVDA;50 | PLTR;500\n"
-            "CASH;100000"
+with tab4: # 全球資產指揮中樞
+    st.header("全球資產指揮中樞 (The Command Center)")
+
+    # 4.1 戰略資產配置
+    with st.expander("4.1 📋 戰略資產配置 (Strategic Asset Allocation)", expanded=True):
+        st.info("在此編輯您的全球投資組合，支援台股(股票/ETF)、美股(股票/債券/ETF)與現金。")
+        # 預設投資組合數據
+        if 'portfolio_df' not in st.session_state:
+            st.session_state.portfolio_df = pd.DataFrame([
+                {'Ticker': '2330', 'Quantity': 1000, 'Cost_Basis': 500.0, 'Type': 'Stock'},
+                {'Ticker': '00675L', 'Quantity': 5000, 'Cost_Basis': 15.0, 'Type': 'ETF'},
+                {'Ticker': 'NVDA', 'Quantity': 100, 'Cost_Basis': 400.0, 'Type': 'US_Stock'},
+                {'Ticker': 'TLT', 'Quantity': 200, 'Cost_Basis': 95.0, 'Type': 'US_Bond'},
+                {'Ticker': 'CASH', 'Quantity': 500000, 'Cost_Basis': 1.0, 'Type': 'Cash'},
+            ])
+
+        edited_df = st.data_editor(
+            st.session_state.portfolio_df,
+            num_rows="dynamic",
+            key="portfolio_editor",
+            use_container_width=True
         )
-        
-        portfolio_input = st.text_area(
-            "輸入您的全球資產 (格式: `代號;張數或股數`)",
-            value=portfolio_example,
-            height=200,
-            help="每筆資產用 `|` 或換行隔開。台股請加 .TW/.TWO 後綴。現金請用 CASH。"
-        )
+        st.session_state.portfolio_df = edited_df
 
-        if st.button("開始壓力測試"):
-            with st.spinner("正在執行機構級壓力測試..."):
-                results_df, summary = run_stress_test(portfolio_input)
-
-                if "error" in summary:
-                    st.error(summary["error"])
-                elif not results_df.empty:
-                    st.subheader("📊 壓力測試結果")
-                    
-                    total_value = summary.get('total_value', 0)
-                    st.metric("目前總資產 (TWD)", f"{total_value:,.0f} 元")
-
-                    # 總計損益
-                    st.markdown("#### **情境總損益**")
-                    total_pnl = results_df.filter(like='損益').sum()
-                    
-                    cols = st.columns(len(total_pnl))
-                    for i, (scenario, pnl) in enumerate(total_pnl.items()):
-                        scenario_name = scenario.replace('損益_', '')
-                        delta_pct = (pnl / total_value) * 100 if total_value > 0 else 0
-                        cols[i].metric(
-                            label=scenario_name,
-                            value=f"{pnl:,.0f}",
-                            delta=f"{delta_pct:.2f}%"
-                        )
-
-                    # 細項結果
-                    st.markdown("#### **各資產預估損益明細**")
-                    display_cols = ['ticker', 'type', 'value_twd'] + [col for col in results_df.columns if '損益' in col]
-                    
-                    def style_pnl(val):
-                        color = 'red' if val < 0 else 'green' if val > 0 else 'white'
-                        return f'color: {color}'
-
-                    st.dataframe(
-                        results_df[display_cols].style.format({
-                            'value_twd': '{:,.0f}',
-                            '損益_回檔 (-5%)': '{:,.0f}',
-                            '損益_修正 (-10%)': '{:,.0f}',
-                            '損益_技術熊市 (-20%)': '{:,.0f}',
-                            '損益_金融海嘯 (-30%)': '{:,.0f}',
-                        }).applymap(style_pnl, subset=[col for col in results_df.columns if '損益' in col]),
-                        use_container_width=True
-                    )
-                else:
-                    st.warning("請輸入有效的投資組合以進行分析。")
-
-    with st.expander("4.2 戰略升級路徑 (Roadmap)", expanded=False):
-        st.markdown("""
-        ### 🚧 核彈級戰略升級路徑 (Roadmap)
-        本區域預留給以下投行級模組，目前施工中：
-        * **1. 黑天鵝壓力測試矩陣 (Black Swan Stress Matrix)**
-        * **2. 流動性深度與吃貨估算 (Liquidity & Impact Model)**
-        * **3. 凱利公式自動倉位演算 (Kelly Execution Engine)**
-        * **4. 組合風險矩陣 (Portfolio Risk Matrix)**
-        * **5. AI 財報關鍵字獵殺升級 (AI Keyword Hunter V2)**
-        """)
-
-    with st.expander("4.3 ⚖️ 凱利公式自動倉位演算 (Kelly Execution Engine)", expanded=False):
-        st.subheader("機構級資金控管中樞")
-        st.info("基於回測數據，計算每筆交易應投入的資金比例，以最大化長期複合成長率。")
-        
-        kelly_tickers_input = st.text_area(
-            "輸入候選股票 (格式: `代號, 預計總資金`)", 
-            "2330, 1000000\n3231, 500000\n2317, 800000"
-        )
-
-        if st.button("🧮 計算最佳下注比例"):
-            with st.spinner("執行多標的回測與凱利演算..."):
-                lines = [line.strip() for line in kelly_tickers_input.split('\n') if line.strip()]
-                results_list = []
-                
-                for line in lines:
-                    try:
-                        ticker, capital_str = line.split(',')
-                        ticker = ticker.strip()
-                        capital = float(capital_str.strip())
-                        
-                        result = run_fast_backtest(ticker)
-                        
+    # 4.2 績效回測與凱利決策
+    with st.expander("4.2 📈 績效回測與凱利決策 (Backtest & Kelly Analysis)"):
+        if st.button("🚀 啟動全球回測"):
+            portfolio_df = st.session_state.get('portfolio_df', pd.DataFrame())
+            if portfolio_df.empty:
+                st.warning("請先在 4.1 配置您的戰略資產。")
+            else:
+                with st.spinner("正在對全球資產執行回測..."):
+                    backtest_results = []
+                    for index, row in portfolio_df.iterrows():
+                        ticker = str(row['Ticker']).strip()
+                        result = run_fast_backtest(ticker, initial_capital=1000000)
                         if result:
-                            kelly_pct = result['kelly']
-                            suggested_amount = kelly_pct * capital
-                            
-                            advice = "🧊 觀望或試單"
-                            if kelly_pct > 0.2:
-                                advice = "🔥🔥 重注進攻"
-                            elif kelly_pct >= 0.05:
-                                advice = "✅ 穩健配置"
+                            result['Ticker'] = ticker
+                            backtest_results.append(result)
+                    
+                    st.session_state.backtest_results = backtest_results
 
-                            results_list.append({
-                                "股票": ticker,
-                                "勝率": result['win_rate'],
-                                "賠率 (盈虧比)": result['profit_factor'],
-                                "凱利建議倉位 %": kelly_pct,
-                                "建議下注金額": suggested_amount,
-                                "高盛級建議": advice
-                            })
-                        else:
-                             results_list.append({
-                                "股票": ticker, "勝率": "N/A", "賠率 (盈虧比)": "N/A",
-                                "凱利建議倉位 %": "N/A", "建議下注金額": "N/A", "高盛級建議": "❌ 回測失敗"
-                            })
-                    except ValueError:
-                        st.warning(f"跳過格式錯誤的行: '{line}'")
-                        continue
+        if 'backtest_results' in st.session_state:
+            results = st.session_state.backtest_results
+            if not results:
+                st.error("所有資產回測失敗，請檢查代號是否正確。")
+            else:
+                # A. 彙整表
+                st.subheader("回測績效總覽")
+                summary_data = []
+                for res in results:
+                    advice = "🧊 觀望或試單"
+                    if res['kelly'] > 0.2: advice = "🔥🔥 重注進攻"
+                    elif res['kelly'] >= 0.05: advice = "✅ 穩健配置"
+                    
+                    summary_data.append({
+                        '代號': res['Ticker'],
+                        '最新價': res['latest_price'],
+                        '夏普值': res['sharpe_ratio'],
+                        '最大回撤': res['max_drawdown'],
+                        '凱利建議倉位 %': res['kelly'],
+                        '建議動作': advice
+                    })
                 
-                if results_list:
-                    results_df = pd.DataFrame(results_list)
-                    st.dataframe(results_df.style
-                        .format({
-                            "勝率": "{:.2%}",
-                            "賠率 (盈虧比)": "{:.2f}",
-                            "凱利建議倉位 %": "{:.2%}",
-                            "建議下注金額": "{:,.0f} 元"
-                        })
-                    )
-                else:
-                    st.warning("未輸入有效標的或所有回測均失敗。")
+                summary_df = pd.DataFrame(summary_data)
+                st.dataframe(summary_df.style.format({
+                    '最新價': '{:.2f}',
+                    '夏普值': '{:.2f}',
+                    '最大回撤': '{:.2%}',
+                    '凱利建議倉位 %': '{:.2%}',
+                }), use_container_width=True)
+                st.divider()
+
+                # B. 深度圖表
+                st.subheader("深度圖表分析")
+                ticker_options = [res['Ticker'] for res in results]
+                selected_ticker = st.selectbox("選擇要查看的資產", options=ticker_options)
+
+                if selected_ticker:
+                    selected_result = next((res for res in results if res['Ticker'] == selected_ticker), None)
+                    if selected_result:
+                        # 圖表 1: 權益曲線
+                        equity_df = selected_result['equity_curve'].reset_index()
+                        equity_df.columns = ['Date', 'Equity']
+                        fig_equity = px.line(
+                            equity_df, x='Date', y='Equity', 
+                            title=f"{selected_ticker} 權益曲線 (Equity Curve)",
+                            labels={'Equity': '投資組合價值', 'Date': '日期'}
+                        )
+                        fig_equity.update_traces(line_color='#17BECF')
+                        st.plotly_chart(fig_equity, use_container_width=True)
+
+                        # 圖表 2: 水下回撤圖
+                        drawdown_df = selected_result['drawdown_series'].reset_index()
+                        drawdown_df.columns = ['Date', 'Drawdown']
+                        drawdown_df['Drawdown_pct'] = drawdown_df['Drawdown'] * 100
+                        fig_drawdown = px.area(
+                            drawdown_df, x='Date', y='Drawdown_pct',
+                            title=f"{selected_ticker} 水下回撤圖 (Underwater Plot)",
+                            labels={'Drawdown_pct': '從高點回落 (%)', 'Date': '日期'}
+                        )
+                        fig_drawdown.update_traces(fillcolor='rgba(255, 87, 51, 0.4)', line_color='rgba(255, 87, 51, 1.0)')
+                        fig_drawdown.update_yaxes(ticksuffix="%")
+                        st.plotly_chart(fig_drawdown, use_container_width=True)
+
+    # 4.3 全球黑天鵝壓力測試
+    with st.expander("4.3 🌪️ 全球黑天鵝壓力測試 (Global Stress Test)"):
+        st.info("此模組將讀取上方配置的資產，模擬在不同全球市場衝擊下，您投資組合的預期損益。")
+        
+        if st.button("啟動全球壓力測試"):
+            portfolio_df = st.session_state.get('portfolio_df', pd.DataFrame())
+            if portfolio_df.empty:
+                st.warning("請先在 4.1 配置您的戰略資產。")
+            else:
+                # 將 DataFrame 轉換為 run_stress_test 所需的字串格式
+                portfolio_input_list = []
+                for _, row in portfolio_df.iterrows():
+                    ticker = str(row['Ticker'])
+                    # 壓力測試函式需要 .TW 後綴
+                    if ticker.isdigit():
+                        ticker = f"{ticker}.TW"
+                    
+                    portfolio_input_list.append(f"{ticker};{row['Quantity']}")
+                
+                portfolio_input_str = "\n".join(portfolio_input_list)
+
+                with st.spinner("正在執行機構級壓力測試..."):
+                    results_df, summary = run_stress_test(portfolio_input_str)
+
+                    if "error" in summary:
+                        st.error(summary["error"])
+                    elif not results_df.empty:
+                        st.subheader("📊 壓力測試結果")
+                        
+                        total_value = summary.get('total_value', 0)
+                        st.metric("目前總資產 (TWD)", f"{total_value:,.0f} 元")
+
+                        st.markdown("#### **情境總損益**")
+                        total_pnl = results_df.filter(like='損益').sum()
+                        
+                        cols = st.columns(len(total_pnl))
+                        for i, (scenario, pnl) in enumerate(total_pnl.items()):
+                            scenario_name = scenario.replace('損益_', '')
+                            delta_pct = (pnl / total_value) * 100 if total_value > 0 else 0
+                            cols[i].metric(
+                                label=scenario_name,
+                                value=f"{pnl:,.0f}",
+                                delta=f"{delta_pct:.2f}%"
+                            )
+
+                        st.markdown("#### **各資產預估損益明細**")
+                        display_cols = ['ticker', 'type', 'value_twd'] + [col for col in results_df.columns if '損益' in col]
+                        
+                        def style_pnl(val):
+                            color = 'red' if val < 0 else 'green' if val > 0 else 'white'
+                            return f'color: {color}'
+
+                        st.dataframe(
+                            results_df[display_cols].style.format({
+                                'value_twd': '{:,.0f}',
+                                '損益_回檔 (-5%)': '{:,.0f}',
+                                '損益_修正 (-10%)': '{:,.0f}',
+                                '損益_技術熊市 (-20%)': '{:,.0f}',
+                                '損益_金融海嘯 (-30%)': '{:,.0f}',
+                            }).applymap(style_pnl, subset=[col for col in results_df.columns if '損益' in col]),
+                            use_container_width=True
+                        )
+                    else:
+                        st.warning("壓力測試未返回結果，請檢查您的投資組合。")
 
 with tab5: # 戰略百科
     with st.expander("5.1 SOP 戰略百科 (SOP Strategy Encyclopedia)", expanded=False):
