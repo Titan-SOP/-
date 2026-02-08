@@ -1,14 +1,14 @@
 # app.py
-# Titan SOP V81.1 - The War Room UI (天神穩健版)
-# [V81.1 Patch]:
-# 1. [UI/UX] 視覺系統精確打擊：移除全域 CSS 標題污染，僅對首頁主標題進行特效渲染，確保內頁可讀性。
-# 2. [Structure] 板塊結構重組：移除 Tab 1 黑天鵝測試，並將其功能遷移至 Tab 4.5，直接與戰略資產配置連動。
-# 3. [Structure] Tab 4 精簡化：移除 4.6 的 ATR 與相關度矩陣功能，聚焦核心決策流程。
-# 4. [Performance] API 加速：將核心數據抓取函式 (宏觀/策略) 的緩存時間調整為 10 分鐘 (600秒)，提升反應速度。
-# 5. [Performance] 頁面隔離：為所有主渲染函式 (render_macro, render_radar...) 加上 @st.fragment 裝飾器，防止頁面切換時不必要的全局重跑。
-# 6. [Memory] 120 分鐘長效記憶鎖：引入閒置超時邏輯，若使用者超過 120 分鐘未活動，將自動重置其投資組合，防止陳舊數據污染決策。
-# 7. [Tab 6] 元趨勢戰法正名與願景闡述，明確開發方向。
-# [CRITICAL FIX]: Corrected data loading logic to prioritize "可轉債市價" for the 'close' field, preventing misidentification with underlying stock price.
+# Titan SOP V82.0 - 元趨勢創世紀版 (Meta-Trend Genesis)
+# [V82.0 Patch]:
+# 1. [Structure] Tab 6 元趨勢戰法重構：升級為「插槽式開發母港」，為次世代引擎預留標準化接口。
+# 2. [Methodology] 植入「月K幾何學」數學定義：在 Tab 6 中明確定義「上帝視角協議 (God's Eye Protocol)」，
+#    包含 35 年全景數據跨度與 9 檔位視覺角度分級，作為未來算法核心。
+# 3. [Structure] 部署 7 大戰術插槽 (Slots)：在 Tab 6 預留數據、算法、LLM、記憶、辯論、視覺化與獵殺清單
+#    等七大核心開發接口，確保未來擴展性。
+# 4. [Maintenance] 維護 V81.1 穩定性：保留首頁標題特效、Fragment 頁面隔離、120 分鐘記憶鎖、
+#    以及 Tab 4.4/4.5 的正確功能佈局。
+# [CRITICAL FIX V81.1]: Corrected data loading logic to prioritize "可轉債市價" for the 'close' field, preventing misidentification with underlying stock price.
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -31,7 +31,7 @@ import io
 # ==========================================
 # [V81] System Initialization & State Management
 # ==========================================
-st.set_page_config(page_title="Titan SOP V81.1", layout="wide", page_icon="🏛️")
+st.set_page_config(page_title="Titan SOP V82.0", layout="wide", page_icon="🏛️")
 
 # --- Session State Initialization (Key Error Protection) ---
 if 'page' not in st.session_state:
@@ -517,7 +517,7 @@ def get_advanced_granville(cp, op, ma87_curr, ma87_prev5):
     if cp > ma87_curr and bias < 3 and is_rising: return "🧱 G3 回測支撐", "回測生命線有守"
     if cp < ma87_curr and op > ma87_curr and not is_rising: return "💀 G4 跌破賣點", "跌破生命線且均線未上揚"
     if cp > ma87_curr and is_falling: return "🎣 G5 假突破(賣)", "突破下彎均線"
-    if cp < ma87_curr and bias > -3 and is_falling: return "🚧 G6 反彈遇壓", "反彈生命線不過"
+    if cp < ma8-7_curr and bias > -3 and is_falling: return "🚧 G6 反彈遇壓", "反彈生命線不過"
     return status, desc
 
 def calculate_ark_scenarios(rev_ttm, shares, cp, g, m, pe, years=5):
@@ -2568,37 +2568,129 @@ def render_data():
         else:
             st.info("請上傳 CB 清單以掃描時間套利事件。")
 
-# --- 🧠 元趨勢戰法 (Meta-Trend) [V81.1 NEW] ---
+# --- 🧠 元趨勢戰法 (Meta-Trend) [V82.0 RECONSTRUCTED] ---
 @st.fragment
 def render_meta_trend():
     if st.button("🏠 返回戰情總部"):
         st.session_state.page = 'home'
         st.rerun()
-    st.title("🧠 元趨勢戰法區 (Meta-Trend Strategy)")
-    
-    st.header("🚧 系統建構中 (Under Construction) 🚧")
+    st.title("🧠 元趨勢戰法開發母港 (Meta-Trend Genesis)")
+
+    # =================================================================
+    # 核心方法論：上帝視角協議 (The "God's Eye" Protocol) - V82.0
+    # -----------------------------------------------------------------
+    # 本協議為元趨勢戰法的數學與哲學基礎，旨在透過極長時間尺度的
+    # 幾何分析，識別出資產的生命週期階段與趨勢的真實「加速度」。
+    #
+    # 1. 時間跨度 (Time Horizon):
+    #    - 全景視角 (Panoramic View): 鎖定 1990-2026 (35年) 的月K線數據。
+    #      此跨度涵蓋了網路泡沫、金融海嘯、後QE時代與AI崛起，
+    #      足以形成對資產「性格」的完整觀察。
+    #    - 局部變異 (Local Variance): 同時計算最近 5 年的軌跡，
+    #      用於偵測長期趨勢中的短期「加速度」或「失速」現象。
+    #
+    # 2. 角度分級 (9-Gear Shift System):
+    #    - 核心算法: 對數價格 (Log Price) 進行時間序列上的線性回歸，
+    #      取其斜率 (Slope)，再透過反正切函數 (Arctan) 轉換為視覺角度。
+    #      此方法能將指數級增長的價格行為，轉化為線性的角度變化，
+    #      更直觀地呈現趨勢強度。
+    #    - 9檔位定義:
+    #      1. 🔻 毀滅崩盤 (Crash): < -45°
+    #         (特徵: 恐慌性拋售，斜率極度為負，如 2008 年的金融股)
+    #      2. ↘️ 空頭修正 (Correction): -45° ~ -10°
+    #         (特徵: 明確的下降通道，反彈無力，高點不斷降低)
+    #      3. 😴 殭屍盤整 (Dormant): -10° ~ +10°
+    #         (特徵: 長時間橫盤，失去市場關注，成交量萎縮，等待催化劑)
+    #      4. 🌱 復甦萌芽 (Awakening): +10° ~ +25°
+    #         (特徵: 醜小鴨階段。底部逐漸墊高，開始出現試探性買盤)
+    #      5. 🛡️ 穩健長多 (Steady): +25° ~ +40°
+    #         (特徵: 價值型護城河。如微軟、可口可樂，穩定增長，抗波動)
+    #      6. 📈 成長主力 (Growth): +40° ~ +55°
+    #         (特徵: 趨勢的核心階段，戴維斯雙擊，營收與估值同步擴張)
+    #      7. 🚀 強力加速 (Turbo): +55° ~ +70°
+    #         (特徵: 主升段，市場共識形成，吸引大量追價買盤)
+    #      8. 🔥 拋物線噴出 (Parabolic): +70° ~ +85°
+    #         (特徵: 泡沫化初期，脫離基本面，情緒驅動。如 2024 年的 PLTR)
+    #      9. ⚠️ 垂直極限 (Vertical Limit): > 85°
+    #         (特徵: 趨勢終點前的最後瘋狂，斜率趨近垂直，風險極高)
+    # =================================================================
+
     st.info(
         """
-        本區域為 Titan SOP 的次世代決策中樞，將部署兩大核心引擎：
+        **歡迎來到元趨勢戰法開發母港 (V82.0)。**
         
-        1.  **月K線價格趨勢幾何角度 (Visual Geometry)**:
-            此戰法核心在於計算價格走勢的「視覺幾何角度」與「加速度」，而非傳統的均線斜率。
-            旨在捕捉趨勢從醞釀到爆發的初始動能，實現更早的左側佈局。
-            
-        2.  **AI 參謀本部 (AI General Staff)**:
-            引入多智能體 (Multi-Agent) 辯論系統。由代表不同投資風格（如價值、成長、動能、避險）的 AI 參謀，
-            針對單一標的進行交叉火力辯論，最終形成一份包含多維度觀點的綜合戰情報告。
-
-        目前正在進行神經網路對接與幾何模型回測，敬請期待 V82 版的重大更新。
+        此區域為 Titan SOP 的次世代決策中樞，採用「插槽式架構」進行模組化開發。
+        下方各分頁代表一個獨立的功能模組，將逐步完成對接。
         """
     )
+
+    tab1, tab2, tab3 = st.tabs(["📐 **幾何角度掃描**", "🗣️ **AI 參謀本部**", "📝 **獵殺清單管理**"])
+
+    with tab1:
+        st.header("📐 全景幾何掃描儀 (Panoramic Geometry Scanner)")
+        st.warning("🚧 模組建構中... 預計 V82.1 上線")
+        
+        st.subheader("1. 數據引擎")
+        st.info("此處將接入數據引擎，負責抓取並處理長週期數據。")
+        # [SLOT-6.1-DATA]: 數據引擎 (負責抓取 yfinance 1990-2026 月K資料與除權息清洗)。
+        st.code("# [SLOT-6.1-DATA] Placeholder: yfinance data ingestion and cleaning logic will be implemented here.", language="python")
+
+        st.subheader("2. 幾何算法核心")
+        st.info("此處將接入核心算法，執行「上帝視角協議」的角度計算。")
+        # [SLOT-6.2-MATH]: 幾何算法核心 (實作上述 9 檔角度計算與加速度偵測)。
+        st.code("# [SLOT-6.2-MATH] Placeholder: 9-Gear Shift angle calculation and acceleration detection logic.", language="python")
+
+        st.subheader("3. 視覺戰情室")
+        st.info("此處將接入視覺化模組，繪製 35 年全景圖與趨勢角度線。")
+        # [SLOT-6.6-VISUAL]: 視覺戰情室 (預留繪製 35 年全景圖與角度線的功能)。
+        st.code("# [SLOT-6.6-VISUAL] Placeholder: Altair/Plotly chart for 35-year panoramic view.", language="python")
+
+    with tab2:
+        st.header("🗣️ AI 參謀本部 (AI General Staff)")
+        st.warning("🚧 模組建構中... 預計 V82.2 上線")
+
+        st.subheader("1. LLM 連接器")
+        st.info("此處將接入大型語言模型 API，作為 AI 參謀的大腦。")
+        # [SLOT-6.3-AGENT-LLM]: LLM 連接器 (預留 Gemini/Claude API 對話接口)。
+        st.code("# [SLOT-6.3-AGENT-LLM] Placeholder: Connection logic for Gemini/Claude APIs.", language="python")
+
+        st.subheader("2. 長期記憶庫 (RAG)")
+        st.info("此處將接入向量數據庫，為 AI 參謀提供財報、法說會、新聞等長期記憶。")
+        # [SLOT-6.4-AGENT-MEM]: 長期記憶庫 (預留 RAG 檢索，存儲財報與新聞)。
+        st.code("# [SLOT-6.4-AGENT-MEM] Placeholder: RAG implementation with Vector DB for long-term memory.", language="python")
+
+        st.subheader("3. 多智能體辯論核心")
+        st.info("此處將實現多頭、空頭、價值、成長等不同風格 AI 的辯論機制。")
+        # [SLOT-6.5-AGENT-DEBATE]: 多智能體辯論核心 (預留 TradingAgents 的多頭 vs 空頭邏輯)。
+        st.code("# [SLOT-6.5-AGENT-DEBATE] Placeholder: Multi-agent debate framework logic.", language="python")
+        
+        st.text_area("辯論結果輸出區", "AI 參謀辯論後的綜合報告將顯示於此...", height=200)
+
+    with tab3:
+        st.header("📝 獵殺清單管理 (Kill List Management)")
+        st.warning("🚧 模組建構中... 預計 V82.3 上線")
+        
+        st.info("此處將管理由「幾何掃描」和「AI 辯論」篩選出的高潛力監控標的。")
+        # [SLOT-6.7-KILL-LIST]: 獵殺清單資料庫 (管理監控中的標的)。
+        st.code("# [SLOT-6.7-KILL-LIST] Placeholder: Database/State management for the kill list.", language="python")
+        
+        mock_data = {
+            '代號': ['NVDA', 'PLTR', 'TSM'],
+            '名稱': ['NVIDIA', 'Palantir', '台積電'],
+            '幾何角度': [78.5, 81.2, 48.9],
+            '角度檔位': ['🔥 拋物線噴出', '🔥 拋物線噴出', '📈 成長主力'],
+            'AI 評級': ['增持', '增持', '中立'],
+            '監控日期': ['2026-02-01', '2026-01-15', '2025-12-10']
+        }
+        st.dataframe(pd.DataFrame(mock_data))
+
 
 # --- 🏠 戰情指揮首頁 (Home) [V81.1 NEW] ---
 @st.fragment
 def render_home():
     # [V81.1] 視覺系統精確打擊：僅對首頁主標題進行特效渲染
     st.markdown(
-        '<h1 style="text-align: center; color:white; text-shadow: 0 0 10px #00FF00, 0 0 20px #00FF00;">🏛️ Titan SOP 全自動戰情室 (V81.1 天神穩健版)</h1>',
+        '<h1 style="text-align: center; color:white; text-shadow: 0 0 10px #00FF00, 0 0 20px #00FF00;">🏛️ Titan SOP 全自動戰情室 (V82.0 元趨勢創世紀版)</h1>',
         unsafe_allow_html=True
     )
     st.markdown("---")
