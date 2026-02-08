@@ -69,6 +69,25 @@ def load_system():
     from backtest import TitanBacktestEngine
     return kb, MacroRiskEngine(), strategy_engine, IntelligenceIngestor(), CalendarAgent(), TitanBacktestEngine()
 
+# [V81 FIX] 全域強制視覺修正 (插入在 load_system 之前)
+st.markdown("""
+    <style>
+    /* 強制所有標題變為純白，並加上綠色光暈 */
+    h1, h2, h3, .stTitle, .stHeader {
+        color: #FFFFFF !important;
+        text-shadow: 0 0 10px rgba(0, 255, 0, 0.5);
+    }
+    /* 強制副標題與說明文字變亮 */
+    p, .stMarkdown, .caption {
+        color: #E0E0E0 !important;
+    }
+    /* 讓數據指標 (Metric) 更清晰 */
+    [data-testid="stMetricValue"] {
+        color: #00FF00 !important;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
 kb, macro, strategy, intel, calendar, backtester = load_system()
 
 # ==========================================
