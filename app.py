@@ -395,8 +395,6 @@ def get_scan_result(_strat, _df):
     """快取策略掃描結果"""
     return _strat.scan_entire_portfolio(_df)
 
-@st.cache_data(ttl=7200)
-st.set_page_config(page_title="Titan SOP V78.2", layout="wide", page_icon="🏛️")
 st.set_page_config(page_title="Titan SOP V78.2", layout="wide", page_icon="🏛️")
 st.title("🏛️ Titan SOP 全自動戰情室 (V99.9 天神)")
 
@@ -2150,6 +2148,7 @@ with tab2: # 可轉債獵殺專區
             st.info("請先執行本頁上方的掃描以獲取買進建議。")
 
 with tab3: # 單兵狙擊總部
+    render_sniper_tab()
 with tab4: # 全球資產指揮中樞 【重構區域】
     st.header("全球資產指揮中樞 (The Command Center)")
 
