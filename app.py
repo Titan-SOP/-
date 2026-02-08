@@ -1,15 +1,13 @@
 # app.py
-# Titan SOP V81.0 - The War Room UI (UI 重構 + V81 六合一功能 + Tab 6 預留位)
-# [V81.0 Patch]:
-# 1. [UI/UX] 廢除原生 Tabs，改採「戰情指揮首頁」狀態驅動導航系統。
-# 2. [UI/UX] 導入 Dark Military 深色軍事風格 CSS，優化使用者體驗。
-# 3. [Tab 4.1] 持股清單實現 Session State 持久化，欄位更名為「買入均價」。
-# 4. [Tab 4.2] 凱利決策預設採用 0.5 半凱利保守模式。
-# 5. [Tab 4.3] 新增「下載戰術回測報表 (Excel)」功能。
-# 6. [Tab 4.4] 新增「智慧調倉計算機」。
-# 7. [Tab 4.5] 新增「相關度矩陣熱力圖」。
-# 8. [Tab 4.6] 新增「ATR 智慧防守停損」。
-# 9. [Tab 6] 建立「元趨勢戰法」頁面結構與開發中告示。
+# Titan SOP V81.1 - The War Room UI (天神穩健版)
+# [V81.1 Patch]:
+# 1. [UI/UX] 視覺系統精確打擊：移除全域 CSS 標題污染，僅對首頁主標題進行特效渲染，確保內頁可讀性。
+# 2. [Structure] 板塊結構重組：移除 Tab 1 黑天鵝測試，並將其功能遷移至 Tab 4.5，直接與戰略資產配置連動。
+# 3. [Structure] Tab 4 精簡化：移除 4.6 的 ATR 與相關度矩陣功能，聚焦核心決策流程。
+# 4. [Performance] API 加速：將核心數據抓取函式 (宏觀/策略) 的緩存時間調整為 10 分鐘 (600秒)，提升反應速度。
+# 5. [Performance] 頁面隔離：為所有主渲染函式 (render_macro, render_radar...) 加上 @st.fragment 裝飾器，防止頁面切換時不必要的全局重跑。
+# 6. [Memory] 120 分鐘長效記憶鎖：引入閒置超時邏輯，若使用者超過 120 分鐘未活動，將自動重置其投資組合，防止陳舊數據污染決策。
+# 7. [Tab 6] 元趨勢戰法正名與願景闡述，明確開發方向。
 # [CRITICAL FIX]: Corrected data loading logic to prioritize "可轉債市價" for the 'close' field, preventing misidentification with underlying stock price.
 import streamlit as st
 import pandas as pd
@@ -33,7 +31,7 @@ import io
 # ==========================================
 # [V81] System Initialization & State Management
 # ==========================================
-st.set_page_config(page_title="Titan SOP V81.0", layout="wide", page_icon="🏛️")
+st.set_page_config(page_title="Titan SOP V81.1", layout="wide", page_icon="🏛️")
 
 # --- Session State Initialization (Key Error Protection) ---
 if 'page' not in st.session_state:
@@ -70,6 +68,29 @@ def load_system():
     return kb, MacroRiskEngine(), strategy_engine, IntelligenceIngestor(), CalendarAgent(), TitanBacktestEngine()
 
 kb, macro, strategy, intel, calendar, backtester = load_system()
+
+# --- [V81.1] 120 分鐘長效記憶鎖 (Memory Persistence) ---
+now = datetime.now()
+is_locked = False
+if 'last_active_time' in st.session_state:
+    time_diff = now - st.session_state.last_active_time
+    if time_diff > timedelta(minutes=120):
+        # 超過120分鐘，重置投資組合
+        st.session_state.portfolio_df = pd.DataFrame([
+            {'資產代號': '2330', '持有數量 (股)': 1000, '買入均價': 500.0, '資產類別': 'Stock'},
+            {'資產代號': '00675L', '持有數量 (股)': 5000, '買入均價': 15.0, '資產類別': 'ETF'},
+            {'資產代號': 'NVDA', '持有數量 (股)': 100, '買入均價': 400.0, '資產類別': 'US_Stock'},
+            {'資產代號': 'TLT', '持有數量 (股)': 200, '買入均價': 95.0, '資產類別': 'US_Bond'},
+            {'資產代號': 'CASH', '持有數量 (股)': 500000, '買入均價': 1.0, '資產類別': 'Cash'},
+        ])
+        if 'sidebar_message' not in st.session_state:
+             st.session_state.sidebar_message = st.sidebar.warning("閒置超過120分鐘，投資組合已重置。", icon="⚠️")
+    else:
+        is_locked = True
+
+# 每次運行都更新最後活動時間
+st.session_state.last_active_time = now
+
 
 # ==========================================
 # [V80 Core Logic] All helper functions are preserved
@@ -176,13 +197,13 @@ def run_fast_backtest(ticker, start_date="2023-01-01", initial_capital=1000000):
     except Exception:
         return None
 
-# --- 效能補丁: 120 分鐘戰術緩存 ---
-@st.cache_data(ttl=7200)
+# --- [V81.1] 效能補丁: 10 分鐘戰術緩存 ---
+@st.cache_data(ttl=600)
 def get_macro_data(_macro, _df):
     """快取宏觀風控數據"""
     return _macro.check_market_status(cb_df=_df)
 
-@st.cache_data(ttl=7200)
+@st.cache_data(ttl=600)
 def get_scan_result(_strat, _df):
     """快取策略掃描結果"""
     return _strat.scan_entire_portfolio(_df)
@@ -657,10 +678,11 @@ def render_leader_dashboard(window_title: str, session_state_key: str, fetch_fun
         st.info("點擊上方按鈕以啟動掃描。")
 
 # ==========================================
-# [V81] Page Rendering Functions
+# [V81.1] Page Rendering Functions
 # ==========================================
 
 # --- 🛡️ 宏觀大盤 (Macro) ---
+@st.fragment
 def render_macro():
     if st.button("🏠 返回戰情總部"):
         st.session_state.page = 'home'
@@ -808,6 +830,7 @@ def render_macro():
             with chart_col: st.altair_chart(chart, use_container_width=True)
 
 # --- 🏹 獵殺雷達 (Radar) ---
+@st.fragment
 def render_radar():
     if st.button("🏠 返回戰情總部"):
         st.session_state.page = 'home'
@@ -2076,6 +2099,7 @@ def render_sniper_tab():
                         st.altair_chart(chart.interactive(), use_container_width=True)
                     else: st.warning("波動過小，無法計算。")
 
+@st.fragment
 def render_sniper():
     if st.button("🏠 返回戰情總部"):
         st.session_state.page = 'home'
@@ -2084,6 +2108,7 @@ def render_sniper():
     render_sniper_tab()
 
 # --- 🚀 全球決策 (Decision) ---
+@st.fragment
 def render_decision():
     if st.button("🏠 返回戰情總部"):
         st.session_state.page = 'home'
@@ -2092,35 +2117,27 @@ def render_decision():
 
     # ==================== 4.1 戰略資產配置 [V81 持久化] ====================
     with st.expander("4.1 📋 戰略資產配置 (Strategic Asset Allocation)", expanded=True):
-        # ========== START: FIX 2 - ASSET EDITOR UNLOCK ==========
         st.info("💡 台股 1 張請輸入 1000；美股以 1 股為單位；現金請輸入總額。此處可直接編輯您的資產。")
 
-        # Create a copy to work with for display purposes
         portfolio_to_display = st.session_state.portfolio_df.copy()
 
-        # --- Calculation Logic for Display ---
         asset_tickers = portfolio_to_display[portfolio_to_display['資產類別'] != 'Cash']['資產代號'].tolist()
         latest_prices_map = {}
 
         if asset_tickers:
             try:
-                # Fetch latest prices using yfinance
                 prices_data = yf.download(asset_tickers, period="1d", progress=False)['Close']
                 if len(asset_tickers) == 1:
-                    # Handle single ticker case where yf returns a Series
                     latest_prices_map = {asset_tickers[0]: prices_data.iloc[-1]}
                 else:
-                    # Handle multiple tickers where yf returns a DataFrame
                     latest_prices_map = prices_data.iloc[-1].to_dict()
             except Exception:
                 st.warning("無法獲取即時市價，部分計算欄位將不顯示。")
 
-        # Map prices and calculate new columns for display
         portfolio_to_display['現價'] = portfolio_to_display['資產代號'].map(latest_prices_map).fillna(1.0)
         portfolio_to_display['市值'] = portfolio_to_display['持有數量 (股)'] * portfolio_to_display['現價']
         portfolio_to_display['未實現損益'] = (portfolio_to_display['現價'] - portfolio_to_display['買入均價']) * portfolio_to_display['持有數量 (股)']
         
-        # Use st.data_editor with column_config to make calculated columns read-only
         edited_df = st.data_editor(
             portfolio_to_display,
             column_config={
@@ -2137,11 +2154,8 @@ def render_decision():
             use_container_width=True
         )
 
-        # --- Save Logic ---
-        # Strip the calculated columns before saving back to session state
         columns_to_save = ['資產代號', '持有數量 (股)', '買入均價', '資產類別']
         st.session_state.portfolio_df = edited_df[columns_to_save]
-        # ========== END: FIX 2 ==========
 
     # ==================== 4.2 績效回測與凱利決策 [V81 半凱利] ====================
     with st.expander("4.2 📈 績效回測與凱利決策 (Backtest & Kelly Analysis)"):
@@ -2169,7 +2183,6 @@ def render_decision():
                 st.subheader("回測績效總覽")
                 summary_data = []
                 for res in results:
-                    # [V81] 預設採用 0.5 Kelly (半凱利)
                     conservative_kelly = res['kelly'] * 0.5
                     
                     advice = "🧊 觀望或試單"
@@ -2276,7 +2289,6 @@ def render_decision():
                         '最大回撤': '{:.2%}', '未來 10 年預期資金': '{:,.0f}', '回測年數': '{:.1f}'
                     }), use_container_width=True)
                     
-                    # [V81] 新增下載按鈕
                     output = io.BytesIO()
                     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
                         wealth_df.to_excel(writer, index=False, sheet_name='MA_Backtest_Report')
@@ -2309,7 +2321,7 @@ def render_decision():
                         fig_dd.update_yaxes(ticksuffix="%")
                         st.plotly_chart(fig_dd, use_container_width=True)
 
-    # ==================== 4.4 智慧調倉計算機 [V81 NEW] ====================
+    # ==================== 4.4 智慧調倉計算機 [V81.1 優化] ====================
     with st.expander("4.4 ⚖️ 智慧調倉計算機 (Rebalancing Calculator)"):
         portfolio_df = st.session_state.get('portfolio_df', pd.DataFrame()).copy()
         if portfolio_df.empty or '資產代號' not in portfolio_df.columns:
@@ -2352,90 +2364,65 @@ def render_decision():
                 except Exception as e:
                     st.error(f"獲取市價或計算失敗: {e}")
 
-    # ==================== 4.5 相關度矩陣 [V81 NEW] ====================
-    with st.expander("4.5 🕸️ 相關度矩陣 (Correlation Matrix)"):
+    # ==================== 4.5 全球黑天鵝壓力測試 [V81.1 遷移] ====================
+    with st.expander("4.5 🌪️ 全球黑天鵝壓力測試 (Black Swan Stress Test)"):
+        st.info("此功能將讀取您在 4.1 配置的資產，模擬全球系統性風險下的投資組合衝擊。")
         portfolio_df = st.session_state.get('portfolio_df', pd.DataFrame())
-        asset_tickers = portfolio_df[portfolio_df['資產類別'] != 'Cash']['資產代號'].tolist()
-        
-        if len(asset_tickers) < 2:
-            st.info("請至少配置兩種非現金資產以計算相關度。")
+
+        if portfolio_df.empty:
+            st.warning("請先在 4.1 配置您的戰略資產。")
         else:
-            if st.button("計算資產相關度"):
-                with st.spinner("正在下載歷史數據並計算相關性..."):
-                    try:
-                        hist_data = yf.download(asset_tickers, period="1y", progress=False)['Close']
-                        returns = hist_data.pct_change().dropna()
-                        corr_matrix = returns.corr()
-                        
-                        fig = px.imshow(corr_matrix, text_auto=True, aspect="auto",
-                                        color_continuous_scale='RdYlGn',
-                                        title="資產價格相關係數熱力圖 (近一年)")
-                        st.plotly_chart(fig, use_container_width=True)
-                    except Exception as e:
-                        st.error(f"相關度矩陣計算失敗: {e}")
-
-    # ==================== 4.6 ATR 智慧防守 [V81 NEW] ====================
-    with st.expander("4.6 🛡️ ATR 智慧防守 (ATR Stop-Loss)"):
-        portfolio_df = st.session_state.get('portfolio_df', pd.DataFrame()).copy()
-        asset_tickers = portfolio_df[portfolio_df['資產類別'] != 'Cash']['資產代號'].tolist()
-
-        if not asset_tickers:
-            st.info("請配置非現金資產以計算建議停損點。")
-        else:
-            atr_multiplier = st.slider("ATR 乘數 (倍)", 1.0, 5.0, 2.0, 0.5)
-            
-            @st.cache_data(ttl=3600)
-            def calculate_atr(ticker, period=14):
-                try:
-                    data = yf.download(ticker, period="3mo", progress=False)
-                    if data.empty: return None, None
-                    high_low = data['High'] - data['Low']
-                    high_close = np.abs(data['High'] - data['Close'].shift())
-                    low_close = np.abs(data['Low'] - data['Close'].shift())
-                    ranges = pd.concat([high_low, high_close, low_close], axis=1)
-                    true_range = np.max(ranges, axis=1)
-                    atr = true_range.rolling(period).mean().iloc[-1]
-                    return data['Close'].iloc[-1], atr
-                except:
-                    return None, None
-
-            results = []
-            for ticker in asset_tickers:
-                price, atr = calculate_atr(ticker)
-                if price is not None and atr is not None:
-                    stop_loss = price - (atr * atr_multiplier)
-                    results.append({
-                        '資產代號': ticker,
-                        '目前市價': price,
-                        'ATR (14日)': atr,
-                        '建議停損價': stop_loss
-                    })
-            
-            # ========== START: FIX 3 - DATAFRAME STYLE CRASH ==========
-            if results:
-                results_df = pd.DataFrame(results)
+            if st.button("💥 啟動壓力測試"):
+                # 將 DataFrame 轉換為 run_stress_test 所需的文本格式
+                portfolio_text_list = []
+                for _, row in portfolio_df.iterrows():
+                    ticker = row['資產代號']
+                    shares = row['持有數量 (股)']
+                    portfolio_text_list.append(f"{ticker};{shares}")
                 
-                # Define columns that should be numeric
-                numeric_cols = ['目前市價', 'ATR (14日)', '建議停損價']
-                
-                # Coerce to numeric, forcing errors (like None from failed API calls) into NaN
-                for col in numeric_cols:
-                    results_df[col] = pd.to_numeric(results_df[col], errors='coerce')
-                    
-                # Drop any rows that failed to produce valid numbers after coercion
-                results_df.dropna(subset=numeric_cols, inplace=True)
+                portfolio_text = "\n".join(portfolio_text_list)
 
-                # Now it's safe to format the sanitized DataFrame
+                with st.spinner("執行全球壓力測試..."):
+                    results_df, summary = run_stress_test(portfolio_text)
+
+                if "error" in summary:
+                    st.error(summary["error"])
+                elif not results_df.empty:
+                    st.session_state.stress_test_results = (results_df, summary)
+                else:
+                    st.error("壓力測試失敗，未返回任何結果。")
+
+            if 'stress_test_results' in st.session_state:
+                results_df, summary = st.session_state.stress_test_results
+                st.subheader("壓力測試結果")
+                
+                total_value = summary.get('total_value', 0)
+                st.metric("目前總市值 (TWD)", f"{total_value:,.0f}")
+
+                # 計算總損益
+                total_pnl_cols = [col for col in results_df.columns if '損益' in col]
+                total_pnl = results_df[total_pnl_cols].sum()
+
+                kpi_cols = st.columns(len(total_pnl))
+                for i, (scenario, pnl) in enumerate(total_pnl.items()):
+                    loss_pct = (pnl / total_value) * 100 if total_value > 0 else 0
+                    kpi_cols[i].metric(
+                        label=scenario.replace('損益_', ''),
+                        value=f"{pnl:,.0f} TWD",
+                        delta=f"{loss_pct:.1f}%"
+                    )
+                
                 st.dataframe(results_df.style.format({
-                    '目前市價': '{:.2f}',
-                    'ATR (14日)': '{:.2f}',
-                    '建議停損價': '{:.2f}'
+                    'price': '{:,.2f}',
+                    'value_twd': '{:,.0f}',
+                    '損益_回檔 (-5%)': '{:,.0f}',
+                    '損益_修正 (-10%)': '{:,.0f}',
+                    '損益_技術熊市 (-20%)': '{:,.0f}',
+                    '損益_金融海嘯 (-30%)': '{:,.0f}',
                 }), use_container_width=True)
-            else:
-                st.error("無法獲取任何資產的 ATR 數據。")
-            # ========== END: FIX 3 ==========
 
 # --- 📚 戰略百科 (Data) ---
+@st.fragment
 def render_data():
     if st.button("🏠 返回戰情總部"):
         st.session_state.page = 'home'
@@ -2581,38 +2568,49 @@ def render_data():
         else:
             st.info("請上傳 CB 清單以掃描時間套利事件。")
 
-# --- 🧠 元趨勢戰法 (Meta-Trend) [V81 NEW] ---
+# --- 🧠 元趨勢戰法 (Meta-Trend) [V81.1 NEW] ---
+@st.fragment
 def render_meta_trend():
     if st.button("🏠 返回戰情總部"):
         st.session_state.page = 'home'
         st.rerun()
-    st.title("🧠 元趨勢戰法區 (Meta-Trend Strategy Zone)")
+    st.title("🧠 元趨勢戰法區 (Meta-Trend Strategy)")
     
     st.header("🚧 系統建構中 (Under Construction) 🚧")
-    # ========== START: FIX 4 - TAB 6 LOGIC DESCRIPTION ==========
     st.info(
         """
-        本區域將部署『月K線價格趨勢角度 (Price Trend Angle / Visual Geometry)』與『多智能體 AI 辯論系統』。
-        此戰法核心在於計算價格走勢的「視覺幾何角度」與「加速度」，而非傳統的均線斜率，旨在捕捉趨勢的初始動能。
-        目前正在進行神經網路對接，敬請期待。
+        本區域為 Titan SOP 的次世代決策中樞，將部署兩大核心引擎：
+        
+        1.  **月K線價格趨勢幾何角度 (Visual Geometry)**:
+            此戰法核心在於計算價格走勢的「視覺幾何角度」與「加速度」，而非傳統的均線斜率。
+            旨在捕捉趨勢從醞釀到爆發的初始動能，實現更早的左側佈局。
+            
+        2.  **AI 參謀本部 (AI General Staff)**:
+            引入多智能體 (Multi-Agent) 辯論系統。由代表不同投資風格（如價值、成長、動能、避險）的 AI 參謀，
+            針對單一標的進行交叉火力辯論，最終形成一份包含多維度觀點的綜合戰情報告。
+
+        目前正在進行神經網路對接與幾何模型回測，敬請期待 V82 版的重大更新。
         """
     )
-    # ========== END: FIX 4 ==========
 
-# --- 🏠 戰情指揮首頁 (Home) [V81 NEW] ---
+# --- 🏠 戰情指揮首頁 (Home) [V81.1 NEW] ---
+@st.fragment
 def render_home():
-    st.title("🏛️ Titan SOP 全自動戰情室 (V81.0 天神)")
+    # [V81.1] 視覺系統精確打擊：僅對首頁主標題進行特效渲染
+    st.markdown(
+        '<h1 style="text-align: center; color:white; text-shadow: 0 0 10px #00FF00, 0 0 20px #00FF00;">🏛️ Titan SOP 全自動戰情室 (V81.1 天神穩健版)</h1>',
+        unsafe_allow_html=True
+    )
     st.markdown("---")
 
-    # ========== START: FIX 1 - UI/UX VISUALS ==========
-    # Custom CSS for Dark Military Style with enhanced visibility
+    # [V81.1] 視覺系統精確打擊：移除全域 CSS，避免污染內頁
     st.markdown("""
     <style>
         /* Main container styling */
         .stApp {
             background-color: #1a1a1a;
         }
-        /* Custom button styling */
+        /* Custom button styling for homepage navigation */
         div.stButton > button {
             background-color: #2a2a2a;
             color: #FFFFFF; /* FORCE WHITE FONT FOR VISIBILITY */
@@ -2642,7 +2640,6 @@ def render_home():
         }
     </style>
     """, unsafe_allow_html=True)
-    # ========== END: FIX 1 ==========
 
     # 3x2 Grid Layout
     col1, col2, col3 = st.columns(3, gap="large")
@@ -2682,6 +2679,9 @@ def render_home():
 # --- Sidebar (remains unchanged) ---
 with st.sidebar:
     st.header("⚙️ 系統設定")
+    if is_locked:
+        st.caption("🔒 記憶鎖定中 (120min)")
+    
     if st.button("🔄 清除快取並刷新"):
         st.cache_data.clear()
         st.cache_resource.clear()
