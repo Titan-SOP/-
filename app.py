@@ -2311,7 +2311,7 @@ with tab4: # 全球資產指揮中樞 【重構區域】
                             ma_results.append(result)
                     
                     st.session_state.ma_lab_results = ma_results
-                    st.session_state.ma_lab_ticker = selected_lab_ticker
+                    
             
             # 顯示結果
             if 'ma_lab_results' in st.session_state and st.session_state.get('ma_lab_ticker') == selected_lab_ticker:
