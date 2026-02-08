@@ -2580,72 +2580,38 @@ def render_meta_trend():
     st.caption("🚀 V82 核心引擎預備中：月K視覺幾何學 (Visual Geometry) x 多智能體參謀本部 (Agent Council)")
 
     # [佈局初始化]
-    # 使用 Tabs 將功能區塊劃分，避免畫面過長
     mt_tab1, mt_tab2, mt_tab3 = st.tabs(["📐 幾何角度掃描", "🗣️ AI 參謀辯論", "📝 獵殺清單管理"])
 
-    # ==========================================
-    # [SLOT-6.1]: 數據引擎接口 (Data Engine)
-    # 預計功能：負責 yfinance 抓取月K線資料，並進行歸一化 (Normalization) 處理。
-    # 狀態：待命
-    # ==========================================
-    
+    # [SLOT-6.1]
     with mt_tab1:
         st.subheader("📐 月K線價格趨勢幾何角度 (Visual Geometry)")
         st.info("💡 這裡將部署：不看均線斜率，而是計算「視覺角度」與「加速度 ($a$)」的演算法。")
-        
         col_input, col_action = st.columns([3, 1])
         with col_input:
-            # [暫時 UI] 讓您可以先輸入代號
             target_symbol = st.text_input("輸入掃描代號 (如 2330, PLTR, IONQ)", value="PLTR")
         with col_action:
             start_scan = st.button("📐 計算角度", type="primary")
 
         if start_scan:
-            # ==========================================
-            # [SLOT-6.2]: 幾何量角器核心算法 (The Protractor)
-            # 預計功能：
-            # 1. 抓取過去 60 個月股價。
-            # 2. 歸一化座標軸。
-            # 3. 計算近 3 個月與近 12 個月的「視覺夾角 (Theta)」。
-            # 4. 判斷是否為「醜小鴨翻身 (Type A)」或「巨人加速 (Type B)」。
-            # ==========================================
             st.warning("🚧 [SLOT-6.2] 幾何演算法尚未植入。待總司令確認數學定義後寫入。")
-            
-            # ==========================================
-            # [SLOT-6.4]: 視覺戰情面板 (Visual Dashboard)
-            # 預計功能：繪製帶有「角度線」與「J-Curve 軌跡」的圖表。
-            # ==========================================
             st.markdown("---")
             st.caption("🚧 [SLOT-6.4] 角度視覺化圖表預留區")
 
+    # [SLOT-6.3]
     with mt_tab2:
         st.subheader("🗣️ AI 參謀本部 (Agent Council)")
         st.info("💡 這裡將部署：揉合 GitHub `TradingAgents` 邏輯的多智能體對抗系統。")
-
-        # ==========================================
-        # [SLOT-6.3]: 多智能體對抗核心 (Agent Debate Core)
-        # 預計功能：
-        # 1. 角色 A (多頭司令)：尋找 X 因子 (願景、國防)。
-        # 2. 角色 B (空頭憲兵)：攻擊財報與估值漏洞。
-        # 3. 角色 C (總指揮)：綜合評分。
-        # ==========================================
         st.write("waiting for agents...")
-        # 這裡未來會顯示 st.chat_message() 對話紀錄
 
+    # [SLOT-6.5]
     with mt_tab3:
         st.subheader("📝 跨代獵殺名單 (The Kill List)")
-        
-        # ==========================================
-        # [SLOT-6.5]: 監控清單資料庫 (Watchlist DB)
-        # 預計功能：儲存您鎖定的量子、核融合、AI 標的，並自動標註目前的「角度狀態」。
-        # ==========================================
         st.table(pd.DataFrame({
             "代號": ["IONQ", "RGTI", "GOOGL"],
             "板塊": ["量子", "量子", "AI/量子"],
             "目前角度": ["待計算", "待計算", "待計算"],
             "狀態": ["監控中", "監控中", "監控中"]
         }))
-        本區域為 Titan SOP 的次世代決策中樞，將部署兩大核心引擎：
         
         1.  **月K線價格趨勢幾何角度 (Visual Geometry)**:
             此戰法核心在於計算價格走勢的「視覺幾何角度」與「加速度」，而非傳統的均線斜率。
