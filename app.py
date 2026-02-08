@@ -517,7 +517,7 @@ def get_advanced_granville(cp, op, ma87_curr, ma87_prev5):
     if cp > ma87_curr and bias < 3 and is_rising: return "🧱 G3 回測支撐", "回測生命線有守"
     if cp < ma87_curr and op > ma87_curr and not is_rising: return "💀 G4 跌破賣點", "跌破生命線且均線未上揚"
     if cp > ma87_curr and is_falling: return "🎣 G5 假突破(賣)", "突破下彎均線"
-    if cp < ma8-7_curr and bias > -3 and is_falling: return "🚧 G6 反彈遇壓", "反彈生命線不過"
+    if cp < ma87_curr and bias > -3 and is_falling: return "🚧 G6 反彈遇壓", "反彈生命線不過"
     return status, desc
 
 def calculate_ark_scenarios(rev_ttm, shares, cp, g, m, pe, years=5):
