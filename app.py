@@ -2767,4 +2767,4 @@ elif st.session_state.page == 'decision':
 elif st.session_state.page == 'data':
     render_data()
 elif st.session_state.page == 'meta_trend':
-    render_meta_trend()```
+    render_meta_trend()
