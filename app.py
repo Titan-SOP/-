@@ -2092,16 +2092,56 @@ def render_decision():
 
     # ==================== 4.1 戰略資產配置 [V81 持久化] ====================
     with st.expander("4.1 📋 戰略資產配置 (Strategic Asset Allocation)", expanded=True):
-        st.info("💡 台股 1 張請輸入 1000；美股以 1 股為單位；現金請輸入總額。")
+        # ========== START: FIX 2 - ASSET EDITOR UNLOCK ==========
+        st.info("💡 台股 1 張請輸入 1000；美股以 1 股為單位；現金請輸入總額。此處可直接編輯您的資產。")
+
+        # Create a copy to work with for display purposes
+        portfolio_to_display = st.session_state.portfolio_df.copy()
+
+        # --- Calculation Logic for Display ---
+        asset_tickers = portfolio_to_display[portfolio_to_display['資產類別'] != 'Cash']['資產代號'].tolist()
+        latest_prices_map = {}
+
+        if asset_tickers:
+            try:
+                # Fetch latest prices using yfinance
+                prices_data = yf.download(asset_tickers, period="1d", progress=False)['Close']
+                if len(asset_tickers) == 1:
+                    # Handle single ticker case where yf returns a Series
+                    latest_prices_map = {asset_tickers[0]: prices_data.iloc[-1]}
+                else:
+                    # Handle multiple tickers where yf returns a DataFrame
+                    latest_prices_map = prices_data.iloc[-1].to_dict()
+            except Exception:
+                st.warning("無法獲取即時市價，部分計算欄位將不顯示。")
+
+        # Map prices and calculate new columns for display
+        portfolio_to_display['現價'] = portfolio_to_display['資產代號'].map(latest_prices_map).fillna(1.0)
+        portfolio_to_display['市值'] = portfolio_to_display['持有數量 (股)'] * portfolio_to_display['現價']
+        portfolio_to_display['未實現損益'] = (portfolio_to_display['現價'] - portfolio_to_display['買入均價']) * portfolio_to_display['持有數量 (股)']
         
+        # Use st.data_editor with column_config to make calculated columns read-only
         edited_df = st.data_editor(
-            st.session_state.portfolio_df,
+            portfolio_to_display,
+            column_config={
+                "資產代號": st.column_config.TextColumn("資產代號", help="台股/美股代號或CASH"),
+                "持有數量 (股)": st.column_config.NumberColumn("持有數量 (股)", format="%d"),
+                "買入均價": st.column_config.NumberColumn("買入均價", format="%.2f"),
+                "資產類別": st.column_config.SelectboxColumn("資產類別", options=['Stock', 'ETF', 'US_Stock', 'US_Bond', 'Cash']),
+                "現價": st.column_config.NumberColumn("現價", format="%.2f", disabled=True),
+                "市值": st.column_config.NumberColumn("市值", format="%.0f", disabled=True),
+                "未實現損益": st.column_config.NumberColumn("未實現損益", format="%+,.0f", disabled=True),
+            },
             num_rows="dynamic",
-            key="portfolio_editor_v81",
+            key="portfolio_editor_v81_fixed",
             use_container_width=True
         )
-        # 即時存回 Session State
-        st.session_state.portfolio_df = edited_df
+
+        # --- Save Logic ---
+        # Strip the calculated columns before saving back to session state
+        columns_to_save = ['資產代號', '持有數量 (股)', '買入均價', '資產類別']
+        st.session_state.portfolio_df = edited_df[columns_to_save]
+        # ========== END: FIX 2 ==========
 
     # ==================== 4.2 績效回測與凱利決策 [V81 半凱利] ====================
     with st.expander("4.2 📈 績效回測與凱利決策 (Backtest & Kelly Analysis)"):
@@ -2371,13 +2411,29 @@ def render_decision():
                         '建議停損價': stop_loss
                     })
             
+            # ========== START: FIX 3 - DATAFRAME STYLE CRASH ==========
             if results:
                 results_df = pd.DataFrame(results)
+                
+                # Define columns that should be numeric
+                numeric_cols = ['目前市價', 'ATR (14日)', '建議停損價']
+                
+                # Coerce to numeric, forcing errors (like None from failed API calls) into NaN
+                for col in numeric_cols:
+                    results_df[col] = pd.to_numeric(results_df[col], errors='coerce')
+                    
+                # Drop any rows that failed to produce valid numbers after coercion
+                results_df.dropna(subset=numeric_cols, inplace=True)
+
+                # Now it's safe to format the sanitized DataFrame
                 st.dataframe(results_df.style.format({
-                    '目前市價': '{:.2f}', 'ATR (14日)': '{:.2f}', '建議停損價': '{:.2f}'
+                    '目前市價': '{:.2f}',
+                    'ATR (14日)': '{:.2f}',
+                    '建議停損價': '{:.2f}'
                 }), use_container_width=True)
             else:
                 st.error("無法獲取任何資產的 ATR 數據。")
+            # ========== END: FIX 3 ==========
 
 # --- 📚 戰略百科 (Data) ---
 def render_data():
@@ -2533,19 +2589,23 @@ def render_meta_trend():
     st.title("🧠 元趨勢戰法區 (Meta-Trend Strategy Zone)")
     
     st.header("🚧 系統建構中 (Under Construction) 🚧")
+    # ========== START: FIX 4 - TAB 6 LOGIC DESCRIPTION ==========
     st.info(
         """
-        本區域將部署『月K線黃金斜率算法』與『多智能體 AI 辯論系統』。
+        本區域將部署『月K線價格趨勢角度 (Price Trend Angle / Visual Geometry)』與『多智能體 AI 辯論系統』。
+        此戰法核心在於計算價格走勢的「視覺幾何角度」與「加速度」，而非傳統的均線斜率，旨在捕捉趨勢的初始動能。
         目前正在進行神經網路對接，敬請期待。
         """
     )
+    # ========== END: FIX 4 ==========
 
 # --- 🏠 戰情指揮首頁 (Home) [V81 NEW] ---
 def render_home():
     st.title("🏛️ Titan SOP 全自動戰情室 (V81.0 天神)")
     st.markdown("---")
 
-    # Custom CSS for Dark Military Style
+    # ========== START: FIX 1 - UI/UX VISUALS ==========
+    # Custom CSS for Dark Military Style with enhanced visibility
     st.markdown("""
     <style>
         /* Main container styling */
@@ -2555,21 +2615,22 @@ def render_home():
         /* Custom button styling */
         div.stButton > button {
             background-color: #2a2a2a;
-            color: #e0e0e0;
+            color: #FFFFFF; /* FORCE WHITE FONT FOR VISIBILITY */
             border: 2px solid #444;
             border-radius: 10px;
-            padding: 20px 20px;
+            padding: 20px;
             width: 100%;
-            height: 150px; /* Fixed height for buttons */
-            font-size: 1.5em; /* Larger font size */
+            height: 150px;
+            font-size: 26px; /* INCREASED FONT SIZE */
             font-weight: bold;
             transition: all 0.3s ease-in-out;
-            box-shadow: 0 0 5px rgba(0, 191, 255, 0); /* Initial transparent glow */
+            box-shadow: 0 0 5px rgba(0, 255, 0, 0); /* Initial transparent glow */
+            line-height: 1.3; /* Better line spacing for two lines */
         }
         div.stButton > button:hover {
-            border-color: #00bfff; /* Deep sky blue */
-            color: #ffffff;
-            box-shadow: 0 0 15px rgba(0, 191, 255, 0.7); /* Glow effect on hover */
+            border-color: #00FF00; /* Bright green border */
+            color: #00FF00; /* Bright green text */
+            box-shadow: 0 0 15px rgba(0, 255, 0, 0.7); /* Green glow effect on hover */
         }
         /* Center text inside the button */
         div.stButton > button > div {
@@ -2581,6 +2642,7 @@ def render_home():
         }
     </style>
     """, unsafe_allow_html=True)
+    # ========== END: FIX 1 ==========
 
     # 3x2 Grid Layout
     col1, col2, col3 = st.columns(3, gap="large")
@@ -2705,4 +2767,4 @@ elif st.session_state.page == 'decision':
 elif st.session_state.page == 'data':
     render_data()
 elif st.session_state.page == 'meta_trend':
-    render_meta_trend()
+    render_meta_trend()```
