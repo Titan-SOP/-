@@ -2592,12 +2592,12 @@ def render_data():
 # --- 🧠 元趨勢戰法 (Meta-Trend) [V82.1 幾何引擎啟動版] ---
 @st.fragment
 # ==========================================
-# [V83.8] AI 參謀本部 (Flash Priority Version)
+# [V84.0] AI 參謀本部 (Single-Shot Debate)
 # ==========================================
 class TitanAgentCouncil:
     """
-    [流量特化版] 強制優先使用 Flash 系列模型。
-    解決 Pro 系列模型在免費帳戶下 Quota 為 0 的 429 錯誤。
+    [單次全景版] 將多、空、指揮官辯論合併為單次請求。
+    大幅節省 API 配額，防止 429 錯誤，並提升邏輯一致性。
     """
     def __init__(self, ticker, rating, angle, r_squared, api_key):
         self.ticker = ticker
@@ -2606,87 +2606,51 @@ class TitanAgentCouncil:
         self.r_squared = r_squared
         self.api_key = api_key
         self.model = None
-        self.active_model_name = "Initializing..."
 
         if self.api_key:
             try:
                 import google.generativeai as genai
                 genai.configure(api_key=self.api_key)
-                
-                # --- 戰術調整：流量優先 ---
-                # Pro 模型雖然聰明，但免費額度極低 (429錯誤元兇)。
-                # 這裡強制優先鎖定 Flash 系列，確保辯論流暢不卡彈。
-                priority_targets = [
-                    'gemini-2.0-flash-exp',    # 最新且快 (首選)
-                    'gemini-1.5-flash',        # 最穩定 (次選)
-                    'gemini-1.5-flash-latest', # 備用
-                ]
-                
-                # 獲取您帳戶實際能用的模型清單
-                available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-                
-                target_model = None
-                
-                # 1. 先從優先名單找 (Flash)
-                for p in priority_targets:
-                    # 比對 API 吐回來的完整路徑 (例如 models/gemini-1.5-flash)
-                    for a in available_models:
-                        if p in a:
-                            target_model = a
-                            break
-                    if target_model: break
-                
-                # 2. 如果 Flash 都沒有，才勉強用 Pro (最後手段)
-                if not target_model:
-                     for a in available_models:
-                        if 'pro' in a:
-                            target_model = a
-                            break
-                
-                # 3. 真的都沒有，就抓第一個
-                if not target_model and available_models:
-                    target_model = available_models[0]
-
-                if target_model:
-                    self.model = genai.GenerativeModel(target_model)
-                    self.active_model_name = target_model
-                else:
-                    self.active_model_name = "No Compatible Model Found"
-
-            except Exception as e:
+                # 自動優先抓取強大模型 (如您要求的 Pro 系列)
+                models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+                target = next((m for m in models if 'pro' in m), models[0])
+                self.model = genai.GenerativeModel(target)
+            except:
                 self.model = None
-                self.active_model_name = f"Error: {str(e)}"
-        
-    def _call_gemini(self, prompt, role_name):
-        if not self.model:
-            return f"⚠️ **{role_name}**: (系統錯誤: {self.active_model_name}。請檢查 API Key。)"
-        
-        try:
-            # 加入 retry 機制，若真的一時卡住可重試
-            response = self.model.generate_content(prompt)
-            return response.text
-        except Exception as e:
-            if "429" in str(e):
-                return f"⚠️ **{role_name}**: (配額耗盡 [{self.active_model_name}]。Google 限制了免費版的高頻呼叫，請稍候 30 秒再試。)"
-            return f"⚠️ **{role_name}**: (連線中斷: {str(e)})"
-
-    def _get_bull_argument(self):
-        prompt = f"你現在是 Titan 戰情室多頭司令。數據: {self.ticker}, 評級: {self.rating}, 角度: {self.angle:.2f}°, R²: {self.r_squared:.3f}。請給出激進看多論點(150字內)。"
-        return self._call_gemini(prompt, "多頭司令")
-
-    def _get_bear_argument(self, bull_argument):
-        prompt = f"你現在是 Titan 戰情室空頭憲兵。反駁此論點: {bull_argument}。標的: {self.ticker}, 角度: {self.angle:.2f}°。請尖酸指出風險(150字內)。"
-        return self._call_gemini(prompt, "空頭憲兵")
-
-    def _get_commander_verdict(self, bull_argument, bear_argument):
-        prompt = f"你是總指揮官。綜合數據與辯論給出裁決。標的: {self.ticker}, 評級: {self.rating}。多頭: {bull_argument}, 空頭: {bear_argument}。給出最終裁決與具體戰術。"
-        return self._call_gemini(prompt, "總指揮官")
 
     def run_debate(self):
-        bull_arg = self._get_bull_argument()
-        bear_arg = self._get_bear_argument(bull_arg)
-        commander_verdict = self._get_commander_verdict(bull_arg, bear_arg)
-        return bull_arg, bear_arg, commander_verdict
+        """一次性執行完整辯論"""
+        if not self.model:
+            return "❌ AI 未啟動", "❌ AI 未啟動", "❌ AI 未啟動"
+
+        prompt = f"""
+        你是 Titan 戰情室的核心決策系統。針對標的 **{self.ticker}**，請分飾三角進行深度辯論。
+        
+        **幾何數據**: 
+        - 評級: {self.rating}
+        - 短期角度: {self.angle:.2f}°
+        - 線性度 (R²): {self.r_squared:.3f}
+
+        請嚴格依照以下格式輸出，不要有額外贅詞：
+        [BULL]
+        (由多頭司令發言，激進看多，強調趨勢加速度)
+        [BEAR]
+        (由空頭憲兵發言，尖酸反駁，指出乖離與追高風險)
+        [COMMANDER]
+        (由總指揮官做出 40/30/30 權重裁決，給出具體戰術指令)
+        """
+        try:
+            response = self.model.generate_content(prompt)
+            raw_text = response.text
+            
+            # 簡單解析文本
+            bull = raw_text.split("[BULL]")[-1].split("[BEAR]")[0].strip()
+            bear = raw_text.split("[BEAR]")[-1].split("[COMMANDER]")[0].strip()
+            judge = raw_text.split("[COMMANDER]")[-1].strip()
+            return bull, bear, judge
+        except Exception as e:
+            return f"連線失敗: {str(e)}", "", ""
+
 # --- 🧠 元趨勢戰法 (Meta-Trend) [V83.4 實戰啟動版] ---
 @st.fragment
 def render_meta_trend():
@@ -2797,28 +2761,36 @@ def render_meta_trend():
                 st.altair_chart(line.interactive(), use_container_width=True)
 
     with tab2:
-        st.header("🗣️ AI 參謀本部 (實戰連線中)")
-        if 'geometry_results' not in st.session_state:
-            st.warning("請先在 Tab 1 完成掃描。")
-        else:
-            res = st.session_state.geometry_results
-            if st.button("🔔 召開戰略辯論會議", type="primary"):
-                 with st.spinner("正在連線 Gemini 戰情室... 多空交戰中..."):
+        st.header("🗣️ AI 戰略分析中心")
+        
+        # 使用彈跳式小視窗進行分析
+        with st.popover("🚀 啟動 AI 參謀辯論", use_container_width=True):
+            st.write("--- 戰情室連線中 ---")
+            if 'geometry_results' not in st.session_state:
+                st.error("請先在 Tab 1 完成幾何掃描。")
+            else:
+                if st.button("🔥 開始模擬辯論", type="primary"):
+                    res = st.session_state.geometry_results
                     council = TitanAgentCouncil(
                         ticker=st.session_state.meta_target,
                         rating=res['rating'],
                         angle=res['short_angle'],
                         r_squared=res['r_squared'],
-                        api_key=user_api_key  # 關鍵：傳入您的 Key
+                        api_key=user_api_key
                     )
-                    st.session_state.titan_council_results = council.run_debate()
+                    with st.spinner("AI 正在進行全景運算..."):
+                        st.session_state.titan_council_results = council.run_debate()
 
-            if st.session_state.get('titan_council_results'):
-                bull, bear, judge = st.session_state.titan_council_results
+        # 顯示結果
+        if st.session_state.get('titan_council_results'):
+            bull, bear, judge = st.session_state.titan_council_results
+            col_l, col_r = st.columns(2)
+            with col_l:
                 with st.chat_message("bull", avatar="🐂"): st.markdown(bull)
+            with col_r:
                 with st.chat_message("bear", avatar="🐻"): st.markdown(bear)
-                st.divider()
-                with st.chat_message("assistant", avatar="🏛️"): st.markdown(judge)
+            st.divider()
+            with st.chat_message("assistant", avatar="🏛️"): st.markdown(f"### 總指揮官裁決\n{judge}")
 
     with tab3:
         st.header("📝 獵殺清單")
