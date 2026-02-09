@@ -13,7 +13,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import google.generativeai as genai
-from config import Config
+from config import WAR_THEATERS  # [V89.1 新增] 全境獵殺戰區清單
 from knowledge_base import TitanKnowledgeBase
 from macro_risk import MacroRiskEngine
 from strategy import TitanStrategyEngine
@@ -2606,6 +2606,9 @@ from datetime import datetime, timedelta
 from scipy.stats import linregress
 import plotly.graph_objects as go
 import google.generativeai as genai
+# [V89.1 新增導入]
+from config import WAR_THEATERS
+import io
 
 # ==========================================
 # [SLOT-6.1] 數據引擎 (Data Engine)
@@ -3015,18 +3018,19 @@ def show_ai_debate_dialog(ticker, geo_data, rating_info, api_key):
 def render_meta_trend():
     """
     元趨勢戰法 - 7維度幾何母港
-    [V86.2 諸神黃昏版]
-    - 全歷史對數回歸圖 (Altair)
-    - 戰略劇本工廠 (Mega-Prompt Generator)
-    - 上櫃股票支援 (.TWO)
+    [V89.1 全境獵殺版]
+    - Tab 4 實裝全境獵殺雷達
+    - 支援 config.py 的 WAR_THEATERS
+    - 實作三種獵殺模式 (Phoenix, Awakening, Rocket)
+    - 實作 GEM 2033 預言提示詞生成與下載
     """
     # 返回首頁按鈕
     if st.button("🏠 返回首頁", type="secondary"):
         st.session_state.page = 'home'
         st.rerun()
     
-    st.title("🧠 元趨勢戰法 (V86.2 諸神黃昏)")
-    st.caption("全歷史幾何 × 戰略工廠 × 上櫃支援")
+    st.title("🧠 元趨勢戰法 (V89.1 全境獵殺)")
+    st.caption("全歷史幾何 × 戰略工廠 × 全境獵殺")
     st.markdown("---")
     
     # ========== 標的輸入 ==========
@@ -3036,7 +3040,7 @@ def render_meta_trend():
         ticker = st.text_input(
             "🎯 輸入分析標的 (支援上市/上櫃/美股)",
             value=st.session_state.get('meta_target', '2330'),
-            placeholder="例如: 2330 (上市), 5274 (上櫃), AAPL (美股)"
+            placeholder="例如: 2330 (上市), 5274.TWO (上櫃), AAPL (美股)"
         )
         st.session_state.meta_target = ticker
     
@@ -3047,11 +3051,16 @@ def render_meta_trend():
     
     # ========== 執行掃描 ==========
     if scan_button and ticker:
-        with st.spinner(f"正在下載 {ticker} 的完整歷史數據（支援上市/上櫃自動切換）..."):
+        with st.spinner(f"正在下載 {ticker} 的完整歷史數據（支援上市/上櫃/全球自動切換）..."):
             geo_results = compute_7d_geometry(ticker)
             
             if geo_results is None:
-                st.error(f"❌ 無法獲取 {ticker} 的數據。已嘗試 .TW 和 .TWO，請檢查代號是否正確。")
+                st.error(f"❌ 無法獲取 {ticker} 的數據。請檢查代號是否正確。")
+                # 清除舊數據避免混淆
+                if 'geometry_results' in st.session_state:
+                    del st.session_state['geometry_results']
+                if 'rating_info' in st.session_state:
+                    del st.session_state['rating_info']
                 return
             
             # 計算信評
@@ -3077,7 +3086,7 @@ def render_meta_trend():
         "📐 7D 幾何全景",
         "🏭 戰略工廠",
         "📝 獵殺清單",
-        "🔧 籌碼雷達",
+        "🚀 全境獵殺",
         "🔧 宏觀對沖",
         "🔧 回測沙盒"
     ])
@@ -3589,19 +3598,140 @@ def render_meta_trend():
             st.info("清單為空，尚無符合條件的標的。")
     
     # ==========================================
-    # [TAB 4-6] 維修中插槽
+    # [TAB 4] 全境獵殺 (The Hunter) - V89.1 實裝
     # ==========================================
     with tab4:
-        st.subheader("🔧 籌碼雷達 (Under Maintenance)")
-        st.warning("""
-        **功能預覽**：
-        - 主力籌碼流向分析
-        - 融資融券比率追蹤
-        - 大戶持股變化監控
-        
-        🚧 此功能正在開發中，敬請期待...
-        """)
-    
+        st.subheader("🚀 全境獵殺雷達 (The Hunter)")
+        st.markdown("---")
+
+        with st.expander("🎯 獵殺控制台 (Mission Control)", expanded=True):
+            # 1. 戰區選擇
+            theater_options = list(WAR_THEATERS.keys())
+            selected_theater = st.selectbox(
+                "選擇掃描戰區 (Select War Theater)",
+                options=theater_options
+            )
+            
+            if selected_theater:
+                stock_count = len(WAR_THEATERS[selected_theater])
+                st.info(f"已選擇戰區 **{selected_theater}**，包含 **{stock_count}** 檔潛力標的。")
+
+            # 2. 啟動按鈕
+            if st.button("🚀 啟動全境掃描", type="primary", use_container_width=True):
+                if not selected_theater:
+                    st.warning("請先選擇一個戰區。")
+                else:
+                    tickers_to_scan = WAR_THEATERS[selected_theater]
+                    total_tickers = len(tickers_to_scan)
+                    hunt_results = []
+                    
+                    progress_bar = st.progress(0, text=f"掃描進度: 0/{total_tickers}")
+                    
+                    for i, t in enumerate(tickers_to_scan):
+                        geo_data = compute_7d_geometry(t)
+                        progress_bar.progress((i + 1) / total_tickers, text=f"掃描進度: {t} ({i+1}/{total_tickers})")
+                        
+                        if geo_data:
+                            # 獲取現價
+                            current_price = 0.0
+                            if t in st.session_state.get('daily_price_data', {}) and not st.session_state.daily_price_data[t].empty:
+                                current_price = st.session_state.daily_price_data[t]['Close'].iloc[-1]
+
+                            # 濾網條件判斷
+                            match_type = None
+                            # 模式 A: Phoenix
+                            if geo_data['10Y']['angle'] < 10 and geo_data['3M']['angle'] > 45:
+                                match_type = "🔥 Phoenix"
+                            # 模式 B: Awakening
+                            elif abs(geo_data['35Y']['angle']) < 15 and geo_data['acceleration'] > 20:
+                                match_type = "🦁 Awakening"
+                            # 模式 C: Rocket
+                            elif geo_data['3M']['angle'] > 60:
+                                match_type = "🚀 Rocket"
+                            
+                            if match_type:
+                                hunt_results.append({
+                                    "代號": t,
+                                    "現價": current_price,
+                                    "35Y角度": geo_data['35Y']['angle'],
+                                    "10Y角度": geo_data['10Y']['angle'],
+                                    "3M角度": geo_data['3M']['angle'],
+                                    "G力": geo_data['acceleration'],
+                                    "型態": match_type
+                                })
+                    
+                    progress_bar.empty()
+                    st.session_state[f'hunt_results_{selected_theater}'] = pd.DataFrame(hunt_results)
+                    st.success(f"✅ {selected_theater} 戰區掃描完成，發現 {len(hunt_results)} 個潛在目標！")
+
+        # 顯示掃描結果
+        if f'hunt_results_{selected_theater}' in st.session_state:
+            results_df = st.session_state[f'hunt_results_{selected_theater}']
+            
+            if not results_df.empty:
+                st.markdown("---")
+                st.markdown("### ⚔️ 戰果清單 (Scan Results)")
+                
+                # 格式化顯示
+                st.dataframe(results_df.style.format({
+                    "現價": "{:.2f}",
+                    "35Y角度": "{:.1f}°",
+                    "10Y角度": "{:.1f}°",
+                    "3M角度": "{:.1f}°",
+                    "G力": "{:+.1f}°"
+                }), use_container_width=True)
+
+                # CSV 下載
+                csv = results_df.to_csv(index=False).encode('utf-8')
+                st.download_button(
+                    label="📥 下載戰果 (CSV)",
+                    data=csv,
+                    file_name=f'hunter_results_{selected_theater}.csv',
+                    mime='text/csv',
+                )
+
+                st.markdown("---")
+                st.markdown("### 🔮 GEM 2033 預言提示詞")
+                st.info("將以下提示詞複製到 Gemini / ChatGPT，以獲取對強勢股的深度分析。")
+
+                # 生成提示詞
+                top_20 = results_df.sort_values("G力", ascending=False).head(20)
+                
+                prompt_list = []
+                for _, row in top_20.iterrows():
+                    prompt_list.append(f"- {row['代號']} (現價: {row['現價']:.2f}, 3M角度: {row['3M角度']:.1f}°, 型態: {row['型態']})")
+                
+                prophecy_prompt = f"""
+身為頂級的全球宏觀策略師，請分析以下從「{selected_theater}」戰區中，透過「7維度幾何掃描」篩選出的強勢股清單。
+
+【任務】
+1.  **總體趨勢分析**：根據這份清單，判斷「{selected_theater}」市場目前的主流趨勢是什麼？(例如：AI基建、生技復甦、能源轉型等)
+2.  **個股深度點評**：從清單中挑選 3-5 檔你認為最具潛力的股票，並說明原因。請結合它們的「型態」(Phoenix, Awakening, Rocket) 進行分析。
+3.  **潛在風險預警**：這些強勢股可能面臨哪些共同的宏觀風險或板塊風險？
+4.  **2033 展望**：基於這份強勢清單，對未來 5-10 年的科技與產業發展做出預測。
+
+【強勢股清單】
+{chr(10).join(prompt_list)}
+
+請以專業、條理分明的方式呈現你的分析報告。
+"""
+                st.text_area("預言提示詞 (Prophecy Prompt)", prophecy_prompt, height=300)
+                
+                # TXT 下載
+                st.download_button(
+                    label="💾 下載預言提示詞 (TXT)",
+                    data=prophecy_prompt,
+                    file_name=f'GEM_PROPHECY_{selected_theater}.txt',
+                    mime='text/plain',
+                    type="primary"
+                )
+
+            else:
+                st.info("在此戰區中未掃描到符合任一獵殺條件的標的。")
+
+    # ==========================================
+    # [TAB 5-6] 維修中插槽
+    # ==========================================
     with tab5:
         st.subheader("🔧 宏觀對沖 (Under Maintenance)")
         st.warning("""
