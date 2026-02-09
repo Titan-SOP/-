@@ -2592,12 +2592,12 @@ def render_data():
 # --- 🧠 元趨勢戰法 (Meta-Trend) [V82.1 幾何引擎啟動版] ---
 @st.fragment
 # ==========================================
-# [V83.6] AI 參謀本部 (Connection Test Version)
+# [V83.7] AI 參謀本部 (Self-Correction Version)
 # ==========================================
 class TitanAgentCouncil:
     """
-    [實彈測試版] 初始化時強制測試連線。
-    確保模型回應成功後才鎖定，徹底解決 404 錯誤。
+    [自適應實戰版] 廢除寫死型號。
+    直接查詢 API 權限列表，自動抓取當前可用最強模型。
     """
     def __init__(self, ticker, rating, angle, r_squared, api_key):
         self.ticker = ticker
@@ -2606,101 +2606,62 @@ class TitanAgentCouncil:
         self.r_squared = r_squared
         self.api_key = api_key
         self.model = None
-        self.model_name = "Unknown"
+        self.active_model_name = "Scanning..."
 
         if self.api_key:
             try:
                 import google.generativeai as genai
                 genai.configure(api_key=self.api_key)
                 
-                # 候選清單：優先使用標準版名稱，避開不穩定的 latest
-                model_candidates = [
-                    'gemini-1.5-flash',       # 速度快且最穩定 (優先)
-                    'gemini-1.5-pro',         # 智能最高
-                    'gemini-2.0-flash-exp',   # 新版實驗性
-                    'gemini-1.5-flash-latest' # 備用
-                ]
+                # --- 核心：動態模型偵測 ---
+                # 直接列出您的 API Key 權限下所有可用的模型
+                available_models = []
+                for m in genai.list_models():
+                    if 'generateContent' in m.supported_generation_methods:
+                        available_models.append(m.name)
                 
-                # 迴圈測試：真的打通電話才算數
-                for m_name in model_candidates:
-                    try:
-                        temp_model = genai.GenerativeModel(m_name)
-                        # 關鍵動作：發送極短訊號測試連線 (Ping)
-                        temp_model.generate_content("hi") 
-                        
-                        # 如果上面沒報錯，代表通了！
-                        self.model = temp_model
-                        self.model_name = m_name
-                        break 
-                    except Exception as e:
-                        # 此路不通，換下一個
-                        continue
+                # 優先順序：2.0系列 > 1.5 Pro > 1.5 Flash
+                # 這樣能確保優先使用您驗證過的高階型號
+                target_model = None
+                for m_path in available_models:
+                    if '2.0' in m_path or 'pro' in m_path: # 優先抓取 Pro 或 2.0
+                        target_model = m_path
+                        break
+                
+                if not target_model and available_models:
+                    target_model = available_models[0] # 保底使用第一個可用的
+
+                if target_model:
+                    self.model = genai.GenerativeModel(target_model)
+                    self.active_model_name = target_model
             except Exception as e:
                 self.model = None
+                self.active_model_name = f"Error: {str(e)}"
         
     def _call_gemini(self, prompt, role_name):
-        """通用 LLM 呼叫函式"""
         if not self.model:
-            return f"⚠️ **{role_name}**: (AI 啟動失敗，所有模型線路皆不通。請檢查 API Key 或額度。)"
+            return f"⚠️ **{role_name}**: (AI 啟動失敗。偵測不到可用型號，請確認 API Key 權限。)"
         
         try:
+            # 注入當前使用的模型資訊，讓總司令掌握實況
             response = self.model.generate_content(prompt)
             return response.text
         except Exception as e:
-            return f"⚠️ **{role_name}**: (連線中斷 [{self.model_name}]: {str(e)})"
+            return f"⚠️ **{role_name}**: (連線中斷於 {self.active_model_name}: {str(e)})"
 
     def _get_bull_argument(self):
-        """生成多頭論點"""
-        prompt = f"""
-        你現在是 Titan 戰情室的【多頭司令】。
-        
-        **任務**: 針對標的 **{self.ticker}**，根據以下數據建立激進看多論點。
-        **數據**: 評級: {self.rating}, 角度: {self.angle:.2f}°, R²: {self.r_squared:.3f}。
-        
-        **要求**:
-        1. 語氣激昂自信。
-        2. 若角度>45度強調主升段。
-        3. 150字以內。
-        """
+        prompt = f"你現在是 Titan 戰情室多頭司令。數據: {self.ticker}, 評級: {self.rating}, 角度: {self.angle:.2f}°, R²: {self.r_squared:.3f}。請給出激進看多論點(150字內)。"
         return self._call_gemini(prompt, "多頭司令")
 
     def _get_bear_argument(self, bull_argument):
-        """生成空頭反駁論點"""
-        prompt = f"""
-        你現在是 Titan 戰情室的【空頭憲兵】。
-        
-        **任務**: 針對 **{self.ticker}**，反駁多頭論點。
-        **多頭說**: "{bull_argument}"
-        **數據**: 評級: {self.rating}, 角度: {self.angle:.2f}°, R²: {self.r_squared:.3f}。
-        
-        **要求**:
-        1. 語氣冷靜尖酸。
-        2. 強調乖離過大與追高風險。
-        3. 150字以內。
-        """
+        prompt = f"你現在是 Titan 戰情室空頭憲兵。反駁此論點: {bull_argument}。標的: {self.ticker}, 角度: {self.angle:.2f}°。請尖酸指出風險(150字內)。"
         return self._call_gemini(prompt, "空頭憲兵")
 
     def _get_commander_verdict(self, bull_argument, bear_argument):
-        """生成總指揮官裁決"""
-        prompt = f"""
-        你是 Titan 戰情室的【總指揮官】。
-        
-        **任務**: 綜合數據與辯論做裁決。
-        **數據**: {self.ticker} (評級: {self.rating}, 角度: {self.angle:.2f}°, R²: {self.r_squared:.3f})
-        **多頭**: {bull_argument}
-        **空頭**: {bear_argument}
-        
-        **權重**: 幾何40% / 線性30% / 辯論30%。
-        
-        **輸出 Markdown**:
-        1. **戰場總結**: 一句話點評。
-        2. **最終裁決**: 【強力買進/分批佈局/觀望/減碼】。
-        3. **戰術指令**: 具體操作建議。
-        """
+        prompt = f"你是總指揮官。綜合數據與辯論給出裁決。標的: {self.ticker}, 評級: {self.rating}。多頭: {bull_argument}, 空頭: {bear_argument}。給出最終裁決與具體戰術。"
         return self._call_gemini(prompt, "總指揮官")
 
     def run_debate(self):
-        """執行完整的辯論流程"""
         bull_arg = self._get_bull_argument()
         bear_arg = self._get_bear_argument(bull_arg)
         commander_verdict = self._get_commander_verdict(bull_arg, bear_arg)
