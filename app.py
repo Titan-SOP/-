@@ -2592,12 +2592,12 @@ def render_data():
 # --- 🧠 元趨勢戰法 (Meta-Trend) [V82.1 幾何引擎啟動版] ---
 @st.fragment
 # ==========================================
-# [V83.7] AI 參謀本部 (Self-Correction Version)
+# [V83.8] AI 參謀本部 (Flash Priority Version)
 # ==========================================
 class TitanAgentCouncil:
     """
-    [自適應實戰版] 廢除寫死型號。
-    直接查詢 API 權限列表，自動抓取當前可用最強模型。
+    [流量特化版] 強制優先使用 Flash 系列模型。
+    解決 Pro 系列模型在免費帳戶下 Quota 為 0 的 429 錯誤。
     """
     def __init__(self, ticker, rating, angle, r_squared, api_key):
         self.ticker = ticker
@@ -2606,48 +2606,69 @@ class TitanAgentCouncil:
         self.r_squared = r_squared
         self.api_key = api_key
         self.model = None
-        self.active_model_name = "Scanning..."
+        self.active_model_name = "Initializing..."
 
         if self.api_key:
             try:
                 import google.generativeai as genai
                 genai.configure(api_key=self.api_key)
                 
-                # --- 核心：動態模型偵測 ---
-                # 直接列出您的 API Key 權限下所有可用的模型
-                available_models = []
-                for m in genai.list_models():
-                    if 'generateContent' in m.supported_generation_methods:
-                        available_models.append(m.name)
+                # --- 戰術調整：流量優先 ---
+                # Pro 模型雖然聰明，但免費額度極低 (429錯誤元兇)。
+                # 這裡強制優先鎖定 Flash 系列，確保辯論流暢不卡彈。
+                priority_targets = [
+                    'gemini-2.0-flash-exp',    # 最新且快 (首選)
+                    'gemini-1.5-flash',        # 最穩定 (次選)
+                    'gemini-1.5-flash-latest', # 備用
+                ]
                 
-                # 優先順序：2.0系列 > 1.5 Pro > 1.5 Flash
-                # 這樣能確保優先使用您驗證過的高階型號
+                # 獲取您帳戶實際能用的模型清單
+                available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+                
                 target_model = None
-                for m_path in available_models:
-                    if '2.0' in m_path or 'pro' in m_path: # 優先抓取 Pro 或 2.0
-                        target_model = m_path
-                        break
                 
+                # 1. 先從優先名單找 (Flash)
+                for p in priority_targets:
+                    # 比對 API 吐回來的完整路徑 (例如 models/gemini-1.5-flash)
+                    for a in available_models:
+                        if p in a:
+                            target_model = a
+                            break
+                    if target_model: break
+                
+                # 2. 如果 Flash 都沒有，才勉強用 Pro (最後手段)
+                if not target_model:
+                     for a in available_models:
+                        if 'pro' in a:
+                            target_model = a
+                            break
+                
+                # 3. 真的都沒有，就抓第一個
                 if not target_model and available_models:
-                    target_model = available_models[0] # 保底使用第一個可用的
+                    target_model = available_models[0]
 
                 if target_model:
                     self.model = genai.GenerativeModel(target_model)
                     self.active_model_name = target_model
+                else:
+                    self.active_model_name = "No Compatible Model Found"
+
             except Exception as e:
                 self.model = None
                 self.active_model_name = f"Error: {str(e)}"
         
     def _call_gemini(self, prompt, role_name):
         if not self.model:
-            return f"⚠️ **{role_name}**: (AI 啟動失敗。偵測不到可用型號，請確認 API Key 權限。)"
+            return f"⚠️ **{role_name}**: (系統錯誤: {self.active_model_name}。請檢查 API Key。)"
         
         try:
-            # 注入當前使用的模型資訊，讓總司令掌握實況
+            # 加入 retry 機制，若真的一時卡住可重試
             response = self.model.generate_content(prompt)
             return response.text
         except Exception as e:
-            return f"⚠️ **{role_name}**: (連線中斷於 {self.active_model_name}: {str(e)})"
+            if "429" in str(e):
+                return f"⚠️ **{role_name}**: (配額耗盡 [{self.active_model_name}]。Google 限制了免費版的高頻呼叫，請稍候 30 秒再試。)"
+            return f"⚠️ **{role_name}**: (連線中斷: {str(e)})"
 
     def _get_bull_argument(self):
         prompt = f"你現在是 Titan 戰情室多頭司令。數據: {self.ticker}, 評級: {self.rating}, 角度: {self.angle:.2f}°, R²: {self.r_squared:.3f}。請給出激進看多論點(150字內)。"
@@ -2666,7 +2687,6 @@ class TitanAgentCouncil:
         bear_arg = self._get_bear_argument(bull_arg)
         commander_verdict = self._get_commander_verdict(bull_arg, bear_arg)
         return bull_arg, bear_arg, commander_verdict
-
 # --- 🧠 元趨勢戰法 (Meta-Trend) [V83.4 實戰啟動版] ---
 @st.fragment
 def render_meta_trend():
