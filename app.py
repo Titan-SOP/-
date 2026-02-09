@@ -2552,7 +2552,7 @@ def render_data():
             if leverage > 3:
                 st.success("🔥 高槓桿甜蜜點：目前槓桿效益佳，適合以小博大。")
             else:
-                st.warning("⚠️ 肉少湯喝：槓桿效益較低，風險報酬比可能不佳，建議直接買進 CB 現股。")
+                st.warning("⚠️ 肉少湯多：槓桿效益較低，風險報酬比可能不佳，建議直接買進 CB 現股。")
         else:
             st.info("CB 市價需高於 100 元才能計算 CBAS 權利金。")
         
@@ -2611,29 +2611,10 @@ import google.generativeai as genai
 # [SLOT-6.1] 數據引擎 (Data Engine)
 # ==========================================
 
-def get_time_slice(df, months):
-    """
-    精準切割最後 N 個月的數據片段
-    
-    Args:
-        df: DataFrame with DatetimeIndex
-        months: 月份數 (例如: 420 代表 35 年)
-    
-    Returns:
-        切割後的 DataFrame
-    """
-    if df.empty:
-        return df
-    
-    end_date = df.index[-1]
-    start_date = end_date - timedelta(days=months * 30)  # 粗略估算
-    
-    return df[df.index >= start_date]
-
-
 def download_full_history(ticker, start="1990-01-01"):
     """
     下載完整歷史月K線數據
+    [V86.2 CRITICAL FIX]: 支援台股上櫃 (.TWO)
     
     Args:
         ticker: 股票代號 (會自動處理台股後綴)
@@ -2642,21 +2623,30 @@ def download_full_history(ticker, start="1990-01-01"):
         月K DataFrame 或 None
     """
     try:
-        # 智慧處理台股代號
+        original_ticker = ticker
+        
+        # [V86.2 修正] 智慧處理台股代號 - 支援上市與上櫃
         if ticker.isdigit() and len(ticker) >= 4:
             ticker = f"{ticker}.TW"
         
         # 下載日K數據 (強制 auto_adjust 以獲取標準 OHLC，避免股息干擾)
         df = yf.download(ticker, start=start, progress=False, auto_adjust=True)
+        
+        # [V86.2 新增] 如果上市沒數據，嘗試上櫃
+        if df.empty and original_ticker.isdigit() and len(original_ticker) >= 4:
+            ticker = f"{original_ticker}.TWO"
+            df = yf.download(ticker, start=start, progress=False, auto_adjust=True)
+        
         # [關鍵修復]：yfinance 多層索引整平 (兼容台股與美股)
-        # 狀況：下載回來可能是 ('Close', '2330.TW')，需轉為 'Close'
         if isinstance(df.columns, pd.MultiIndex):
            try:
                df.columns = df.columns.get_level_values(0)
-           except: pass
+           except: 
+               pass
         
         if df.empty:
             return None
+        
         # 確保索引是時間格式 (Resample 的前提)
         if not isinstance(df.index, pd.DatetimeIndex):
             df.index = pd.to_datetime(df.index)
@@ -2669,6 +2659,11 @@ def download_full_history(ticker, start="1990-01-01"):
             'Close': 'last',
             'Volume': 'sum'
         }).dropna()
+        
+        # [V86.2 新增] 儲存原始日K數據到 session_state 供圖表使用
+        if 'daily_price_data' not in st.session_state:
+            st.session_state.daily_price_data = {}
+        st.session_state.daily_price_data[original_ticker] = df
         
         return df_monthly
     
@@ -3004,14 +2999,18 @@ def show_ai_debate_dialog(ticker, geo_data, rating_info, api_key):
 def render_meta_trend():
     """
     元趨勢戰法 - 7維度幾何母港
+    [V86.2 諸神黃昏版]
+    - 全歷史對數回歸圖 (Altair)
+    - 戰略劇本工廠 (Mega-Prompt Generator)
+    - 上櫃股票支援 (.TWO)
     """
     # 返回首頁按鈕
     if st.button("🏠 返回首頁", type="secondary"):
         st.session_state.page = 'home'
         st.rerun()
     
-    st.title("🧠 元趨勢戰法 (Meta-Trend Genesis V85.0)")
-    st.caption("7 維度幾何基因 × 22 階泰坦信評 × AI 參謀本部")
+    st.title("🧠 元趨勢戰法 (V86.2 諸神黃昏)")
+    st.caption("全歷史幾何 × 戰略工廠 × 上櫃支援")
     st.markdown("---")
     
     # ========== 標的輸入 ==========
@@ -3019,9 +3018,9 @@ def render_meta_trend():
     
     with col_input1:
         ticker = st.text_input(
-            "🎯 輸入分析標的",
+            "🎯 輸入分析標的 (支援上市/上櫃/美股)",
             value=st.session_state.get('meta_target', '2330'),
-            placeholder="例如: 2330, AAPL, NVDA"
+            placeholder="例如: 2330 (上市), 5274 (上櫃), AAPL (美股)"
         )
         st.session_state.meta_target = ticker
     
@@ -3032,11 +3031,11 @@ def render_meta_trend():
     
     # ========== 執行掃描 ==========
     if scan_button and ticker:
-        with st.spinner(f"正在下載 {ticker} 的完整歷史數據..."):
+        with st.spinner(f"正在下載 {ticker} 的完整歷史數據（支援上市/上櫃自動切換）..."):
             geo_results = compute_7d_geometry(ticker)
             
             if geo_results is None:
-                st.error(f"❌ 無法獲取 {ticker} 的數據，請檢查代號是否正確。")
+                st.error(f"❌ 無法獲取 {ticker} 的數據。已嘗試 .TW 和 .TWO，請檢查代號是否正確。")
                 return
             
             # 計算信評
@@ -3055,11 +3054,12 @@ def render_meta_trend():
     
     geo = st.session_state.geometry_results
     rating = st.session_state.rating_info
+    ticker = st.session_state.meta_target
     
     # 建立 6 個 Tab
     tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
         "📐 7D 幾何全景",
-        "🗣️ AI 戰略辯論",
+        "🏭 戰略工廠",
         "📝 獵殺清單",
         "🔧 籌碼雷達",
         "🔧 宏觀對沖",
@@ -3067,12 +3067,12 @@ def render_meta_trend():
     ])
     
     # ==========================================
-    # [TAB 1] 7D 幾何全景
+    # [TAB 1] 7D 幾何全景 - 全歷史對數回歸圖
     # ==========================================
     with tab1:
         st.subheader("📐 七維度幾何儀表板")
         
-        # 顯示信評
+        # ===== 保留區：信評卡片 =====
         st.markdown(f"""
         <div style='background-color: {rating[3]}; padding: 20px; border-radius: 10px; text-align: center;'>
             <h2 style='color: white; margin: 0;'>{rating[0]}</h2>
@@ -3083,7 +3083,7 @@ def render_meta_trend():
         
         st.markdown("---")
         
-        # 7 個維度的角度顯示
+        # ===== 保留區：7 個維度的角度顯示 =====
         periods = ['35Y', '10Y', '5Y', '3Y', '1Y', '6M', '3M']
         
         # 建立 4x2 網格
@@ -3116,7 +3116,7 @@ def render_meta_trend():
                         </div>
                         """, unsafe_allow_html=True)
         
-        # 加速度與 Phoenix 信號
+        # ===== 保留區：加速度與 Phoenix 信號 =====
         st.markdown("---")
         col_acc, col_phx = st.columns(2)
         
@@ -3143,75 +3143,377 @@ def render_meta_trend():
             </div>
             """, unsafe_allow_html=True)
         
-        # 熱力圖
+        # ===== [V86.2 新增] 全歷史對數線性回歸圖 =====
         st.markdown("---")
-        st.subheader("🌡️ 幾何熱力圖")
+        st.subheader("📈 全歷史對數線性回歸 (上帝軌道)")
         
-        # 準備熱力圖數據
-        heatmap_data = []
-        for period in periods:
-            heatmap_data.append({
-                'Period': period,
-                'Angle': geo[period]['angle'],
-                'R²': geo[period]['r2']
-            })
-        
-        df_heat = pd.DataFrame(heatmap_data)
-        
-        # 使用 Plotly 建立熱力圖
-        fig = go.Figure(data=go.Heatmap(
-            z=[df_heat['Angle'].values],
-            x=df_heat['Period'].values,
-            y=['Angle (°)'],
-            colorscale=[
-                [0, '#8B0000'],      # 深紅 (極度負值)
-                [0.3, '#FF4500'],    # 橙紅
-                [0.45, '#FFD700'],   # 金色
-                [0.55, '#ADFF2F'],   # 黃綠
-                [0.7, '#00FF00'],    # 綠色
-                [1, '#00FF00']       # 亮綠
-            ],
-            text=df_heat['Angle'].values,
-            texttemplate='%{text:.1f}°',
-            textfont={"size": 16, "color": "white"},
-            colorbar=dict(title="角度")
-        ))
-        
-        fig.update_layout(
-            title="7 維度角度分布",
-            height=200,
-            template="plotly_dark"
-        )
-        
-        st.plotly_chart(fig, use_container_width=True)
+        # 獲取日K數據
+        if ticker in st.session_state.get('daily_price_data', {}):
+            df_daily = st.session_state.daily_price_data[ticker]
+            
+            if df_daily is not None and not df_daily.empty:
+                # 準備數據
+                df_chart = df_daily.copy()
+                df_chart = df_chart.reset_index()
+                df_chart.columns = ['Date', 'Open', 'High', 'Low', 'Close', 'Volume']
+                
+                # 計算全歷史線性回歸 (對數空間)
+                df_chart['Days'] = np.arange(len(df_chart))
+                log_prices = np.log(df_chart['Close'].values)
+                
+                from scipy.stats import linregress
+                slope, intercept, r_value, p_value, std_err = linregress(
+                    df_chart['Days'].values, 
+                    log_prices
+                )
+                
+                # 計算趨勢線 (在原始價格空間)
+                df_chart['Trendline'] = np.exp(intercept + slope * df_chart['Days'])
+                
+                # 計算當前乖離率
+                current_price = df_chart['Close'].iloc[-1]
+                current_trend = df_chart['Trendline'].iloc[-1]
+                deviation = ((current_price / current_trend) - 1) * 100
+                
+                # 顯示統計資訊
+                col_stat1, col_stat2, col_stat3 = st.columns(3)
+                with col_stat1:
+                    st.metric("全歷史 R²", f"{r_value**2:.4f}")
+                with col_stat2:
+                    st.metric("當前價格", f"${current_price:.2f}")
+                with col_stat3:
+                    deviation_color = "normal" if abs(deviation) < 20 else "inverse"
+                    st.metric(
+                        "趨勢線乖離", 
+                        f"{deviation:+.1f}%",
+                        delta_color=deviation_color
+                    )
+                
+                # 使用 Altair 繪製對數座標圖
+                st.info("💡 Y軸為對數座標，可更清楚觀察長期幾何趨勢。藍色虛線為全歷史回歸軌道。")
+                
+                # 價格線
+                price_line = alt.Chart(df_chart).mark_line(
+                    color='#00FF00',
+                    strokeWidth=2
+                ).encode(
+                    x=alt.X('Date:T', title='時間', axis=alt.Axis(format='%Y')),
+                    y=alt.Y('Close:Q', 
+                           title='收盤價 (對數座標)', 
+                           scale=alt.Scale(type='log'),
+                           axis=alt.Axis(tickCount=10)),
+                    tooltip=[
+                        alt.Tooltip('Date:T', title='日期', format='%Y-%m-%d'),
+                        alt.Tooltip('Close:Q', title='收盤價', format=',.2f'),
+                        alt.Tooltip('Trendline:Q', title='趨勢線', format=',.2f')
+                    ]
+                ).properties(
+                    height=500,
+                    title=f'{ticker} - 全歷史對數線性回歸分析 (1990-Now)'
+                )
+                
+                # 趨勢線 (上帝軌道)
+                trend_line = alt.Chart(df_chart).mark_line(
+                    color='#4169E1',
+                    strokeWidth=2,
+                    strokeDash=[5, 5]
+                ).encode(
+                    x='Date:T',
+                    y=alt.Y('Trendline:Q', scale=alt.Scale(type='log'))
+                )
+                
+                # 合併圖表
+                final_chart = (price_line + trend_line).configure_axis(
+                    gridColor='#333333',
+                    domainColor='#666666'
+                ).configure_view(
+                    strokeWidth=0
+                )
+                
+                st.altair_chart(final_chart, use_container_width=True)
+                
+                # 解讀建議
+                st.markdown("---")
+                st.subheader("📊 幾何解讀")
+                
+                if abs(deviation) < 10:
+                    st.success(f"✅ 價格貼近趨勢線 (乖離 {deviation:+.1f}%)，處於健康軌道。")
+                elif deviation > 30:
+                    st.warning(f"⚠️ 價格遠高於趨勢線 (乖離 +{deviation:.1f}%)，可能過熱，注意回調風險。")
+                elif deviation < -30:
+                    st.info(f"💎 價格遠低於趨勢線 (乖離 {deviation:.1f}%)，若基本面無虞，可能是逢低機會。")
+                else:
+                    st.info(f"ℹ️ 價格略偏離趨勢線 (乖離 {deviation:+.1f}%)，屬正常波動範圍。")
+            
+            else:
+                st.warning("⚠️ 無法繪製圖表：日K數據為空。")
+        else:
+            st.warning("⚠️ 請先執行掃描以載入數據。")
     
     # ==========================================
-    # [TAB 2] AI 戰略辯論
+    # [TAB 2] 戰略工廠 - Mega-Prompt Generator
     # ==========================================
     with tab2:
-        st.subheader("🗣️ AI 參謀本部戰略辯論")
+        st.subheader("🏭 戰略劇本工廠 (Mega-Prompt Generator)")
         
         st.info("""
         **功能說明**：
-        - 點擊下方按鈕開啟 AI 戰情室彈跳視窗
-        - AI 將基於 7 維度幾何數據進行多空辯論
-        - 需要在側邊欄輸入 Gemini API Key 才能使用
+        - 本工廠將根據 7 維度幾何數據，自動生成一份**超詳細戰略劇本提示詞** (2000+ 字元)
+        - 您可以複製或下載此提示詞，貼給外部 AI (Gemini / ChatGPT / Claude) 進行深度分析
+        - 不需要 API Key，完全離線生成
         """)
         
-        # 大按鈕
-        if st.button("🚀 開啟戰情室 (Launch AI Debate)", type="primary", use_container_width=True):
-            api_key = st.session_state.get('api_key', '')
-            
-            if not api_key:
-                st.warning("⚠️ 請先在側邊欄輸入 Gemini API Key")
-            else:
-                # 呼叫 Dialog
-                show_ai_debate_dialog(
-                    ticker=st.session_state.meta_target,
-                    geo_data=geo,
-                    rating_info=rating,
-                    api_key=api_key
+        if st.button("🚀 生成戰略劇本 (Generate Mega-Prompt)", type="primary", use_container_width=True):
+            with st.spinner("🔨 正在構造戰略劇本..."):
+                
+                # ===== 構造超詳細 Prompt =====
+                mega_prompt = f"""
+╔══════════════════════════════════════════════════════════════════╗
+║          🏛️ TITAN SOP V86.2 - 戰略劇本生成系統                ║
+║              標的: {ticker}                                      ║
+║              生成時間: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}        ║
+╚══════════════════════════════════════════════════════════════════╝
+
+【系統數據 - 七維度幾何掃描結果】
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. 超長期視角 (35 年)：
+   - 角度：{geo['35Y']['angle']}°
+   - 線性度 (R²)：{geo['35Y']['r2']}
+   - 斜率：{geo['35Y']['slope']}
+   
+2. 長期視角 (10 年)：
+   - 角度：{geo['10Y']['angle']}°
+   - 線性度 (R²)：{geo['10Y']['r2']}
+   - 斜率：{geo['10Y']['slope']}
+   
+3. 中長期視角 (5 年)：
+   - 角度：{geo['5Y']['angle']}°
+   - 線性度 (R²)：{geo['5Y']['r2']}
+   - 斜率：{geo['5Y']['slope']}
+   
+4. 中期視角 (3 年)：
+   - 角度：{geo['3Y']['angle']}°
+   - 線性度 (R²)：{geo['3Y']['r2']}
+   - 斜率：{geo['3Y']['slope']}
+   
+5. 短中期視角 (1 年)：
+   - 角度：{geo['1Y']['angle']}°
+   - 線性度 (R²)：{geo['1Y']['r2']}
+   - 斜率：{geo['1Y']['slope']}
+   
+6. 短期視角 (6 個月)：
+   - 角度：{geo['6M']['angle']}°
+   - 線性度 (R²)：{geo['6M']['r2']}
+   - 斜率：{geo['6M']['slope']}
+   
+7. 極短期視角 (3 個月)：
+   - 角度：{geo['3M']['angle']}°
+   - 線性度 (R²)：{geo['3M']['r2']}
+   - 斜率：{geo['3M']['slope']}
+
+【衍生指標】
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🔥 加速度：{geo['acceleration']}° (3M角度 - 1Y角度)
+   解讀：{'正值代表短期趨勢加速向上' if geo['acceleration'] > 0 else '負值代表短期趨勢減速或反轉'}
+
+🐦 Phoenix 信號：{'🔥 觸發' if geo['phoenix_signal'] else '❄️ 未觸發'}
+   定義：長期 (10Y) 下跌 + 短期 (6M) 急劇翻揚 > 25°
+   意義：潛在的「浴火重生」轉機股特徵
+
+【泰坦信評系統】
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+評級等級：{rating[0]}
+評級名稱：{rating[1]}
+評級描述：{rating[2]}
+
+【全歷史趨勢線乖離分析】
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+"""
+                
+                # 添加乖離率分析（如果有數據）
+                if ticker in st.session_state.get('daily_price_data', {}):
+                    df_daily = st.session_state.daily_price_data[ticker]
+                    if df_daily is not None and not df_daily.empty:
+                        df_temp = df_daily.copy().reset_index()
+                        df_temp['Days'] = np.arange(len(df_temp))
+                        log_prices = np.log(df_temp['Close'].values)
+                        slope_full, intercept_full, r_val, _, _ = linregress(
+                            df_temp['Days'].values, log_prices
+                        )
+                        current_price = df_temp['Close'].iloc[-1]
+                        current_trend = np.exp(intercept_full + slope_full * df_temp['Days'].iloc[-1])
+                        deviation = ((current_price / current_trend) - 1) * 100
+                        
+                        mega_prompt += f"""
+當前價格：${current_price:.2f}
+趨勢線價格：${current_trend:.2f}
+乖離率：{deviation:+.2f}%
+全歷史回歸 R²：{r_val**2:.4f}
+
+乖離解讀：
+"""
+                        if abs(deviation) < 10:
+                            mega_prompt += "✅ 價格緊貼趨勢線，處於均衡狀態。\n"
+                        elif deviation > 30:
+                            mega_prompt += f"⚠️ 嚴重正乖離 (+{deviation:.1f}%)，可能過熱，需警惕回調。\n"
+                        elif deviation < -30:
+                            mega_prompt += f"💎 嚴重負乖離 ({deviation:.1f}%)，若基本面無虞，可能是低估機會。\n"
+                        else:
+                            mega_prompt += f"ℹ️ 輕度乖離 ({deviation:+.1f}%)，屬正常波動範圍。\n"
+                
+                mega_prompt += f"""
+
+【角色設定 - 三方辯論架構】
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+你現在是一個由三位頂級分析師組成的投資決策委員會：
+
+1. 🔴 天使 (多方代表)
+   - 職責：尋找所有支持上漲的證據
+   - 依據：長期趨勢、加速度、線性度、Phoenix 信號
+   - 目標：論證這是「起漲點」的可能性
+
+2. 🔵 惡魔 (空方代表)
+   - 職責：揭露所有潛在風險
+   - 依據：負向加速度、趨勢背離、過度乖離、線性度崩潰
+   - 目標：論證這是「逃命波」的可能性
+
+3. 🟡 上帝 (裁決者)
+   - 職責：整合雙方觀點，做出最終判斷
+   - 依據：綜合七維度數據的一致性與矛盾性
+   - 目標：給出明確的行動建議 (買入/觀望/賣出)
+
+【任務目標】
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+請基於上述「七維度幾何數據」，進行以下分析：
+
+1. 天使論點 (至少 3 個具體論據)：
+   - 從 35Y/10Y/5Y/3Y/1Y/6M/3M 中，找出支持做多的角度與 R² 證據
+   - 分析加速度是否為正，短期是否強於長期
+   - 判斷 Phoenix 信號是否暗示轉機
+   - 評估趨勢線乖離是否提供低吸機會
+
+2. 惡魔論點 (至少 3 個具體風險)：
+   - 從 35Y/10Y/5Y/3Y/1Y/6M/3M 中，找出趨勢衰退或背離的跡象
+   - 分析加速度是否為負，短期是否弱於長期
+   - 判斷是否存在「價格創高但動能衰竭」的 Divergence
+   - 評估趨勢線乖離是否暗示泡沫化
+
+3. 上帝裁決 (綜合判斷)：
+   - 整合天使與惡魔的論點，權衡利弊
+   - 給出明確的戰略建議：
+     * 【強力買入】：如果多項指標一致向上且風險可控
+     * 【謹慎買入】：如果偏多但存在部分隱憂
+     * 【中性觀望】：如果多空勢均力敵
+     * 【謹慎賣出】：如果偏空且風險顯現
+     * 【強力賣出】：如果多項指標一致向下
+   
+   - 給出具體的進場/出場價位建議 (基於趨勢線乖離)
+   - 給出停損/停利建議 (基於幾何角度變化)
+
+【輸出格式要求】
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+請按照以下結構輸出你的分析：
+
+---
+## 🔴 天使論點 (多方代表)
+
+1. [論點一標題]
+   - 數據依據：...
+   - 邏輯推理：...
+   - 結論：...
+
+2. [論點二標題]
+   ...
+
+3. [論點三標題]
+   ...
+
+---
+## 🔵 惡魔論點 (空方代表)
+
+1. [風險一標題]
+   - 數據依據：...
+   - 邏輯推理：...
+   - 結論：...
+
+2. [風險二標題]
+   ...
+
+3. [風險三標題]
+   ...
+
+---
+## 🟡 上帝裁決 (最終判斷)
+
+### 綜合評估
+- 多方優勢：...
+- 空方風險：...
+- 決定性因素：...
+
+### 戰略建議
+- **行動方針**：【強力買入 / 謹慎買入 / 中性觀望 / 謹慎賣出 / 強力賣出】
+- **進場價位**：$XXX (基於趨勢線 ±Y%)
+- **停損價位**：$XXX (跌破關鍵支撐)
+- **停利價位**：$XXX (觸及趨勢線 +Z%)
+- **持倉建議**：輕倉/標準倉/重倉/空倉
+
+### 風險提示
+- [關鍵風險 1]
+- [關鍵風險 2]
+- [關鍵風險 3]
+
+---
+
+【重要提醒】
+1. 所有論點必須明確引用「七維度數據」中的具體數值
+2. 避免模糊表述如「可能」、「或許」，要給出明確判斷
+3. 價位建議必須基於數學計算 (趨勢線 ± 乖離率)，而非主觀猜測
+4. 如果數據矛盾 (例如長期向上但短期崩跌)，必須明確指出並權衡
+
+請開始你的分析。
+"""
+                
+                # 顯示生成的 Prompt
+                st.success("✅ 戰略劇本生成完成！")
+                st.markdown("---")
+                
+                # 使用 text_area 顯示 (可複製)
+                st.text_area(
+                    "📋 戰略劇本內容 (可直接複製)",
+                    value=mega_prompt,
+                    height=300,
+                    help="請點擊右上角的複製按鈕，或使用 Ctrl+A 全選後複製"
                 )
+                
+                # 下載按鈕
+                st.download_button(
+                    label="💾 下載為 TXT 檔案",
+                    data=mega_prompt,
+                    file_name=f"titan_strategy_{ticker}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
+                    mime="text/plain",
+                    type="primary"
+                )
+                
+                # 使用說明
+                st.info("""
+                **📌 使用方法**：
+                1. 點擊文字框右上角的 📋 複製按鈕，或手動全選複製
+                2. 將內容貼到外部 AI 工具：
+                   - **Gemini**: https://gemini.google.com
+                   - **ChatGPT**: https://chat.openai.com
+                   - **Claude**: https://claude.ai
+                3. 讓 AI 根據提示詞進行深度戰略分析
+                4. 也可點擊「💾 下載為 TXT 檔案」保存到本機
+                """)
+                
+                # 統計資訊
+                st.caption(f"📊 提示詞統計：共 {len(mega_prompt)} 字元 / {len(mega_prompt.split())} 詞")
     
     # ==========================================
     # [TAB 3] 獵殺清單
@@ -3219,7 +3521,7 @@ def render_meta_trend():
     with tab3:
         st.subheader("📝 條件式獵殺清單")
         
-        st.info("只有當幾何信評達到 **AA-** 或更高等級時,才會觸發『存入獵殺清單』的選項。")
+        st.info("只有當幾何信評達到 **AA-** 或更高等級時，才會觸發『存入獵殺清單』的選項。")
         
         high_ratings = [
             "SSS", "AAA", "Phoenix", "Launchpad", 
