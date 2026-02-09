@@ -2646,11 +2646,20 @@ def download_full_history(ticker, start="1990-01-01"):
         if ticker.isdigit() and len(ticker) >= 4:
             ticker = f"{ticker}.TW"
         
-        # 下載日K數據
-        df = yf.download(ticker, start=start, progress=False)
+        # 下載日K數據 (強制 auto_adjust 以獲取標準 OHLC，避免股息干擾)
+        df = yf.download(ticker, start=start, progress=False, auto_adjust=True)
+        # [關鍵修復]：yfinance 多層索引整平 (兼容台股與美股)
+        # 狀況：下載回來可能是 ('Close', '2330.TW')，需轉為 'Close'
+        if isinstance(df.columns, pd.MultiIndex):
+           try:
+               df.columns = df.columns.get_level_values(0)
+           except: pass
         
         if df.empty:
             return None
+        # 確保索引是時間格式 (Resample 的前提)
+        if not isinstance(df.index, pd.DatetimeIndex):
+            df.index = pd.to_datetime(df.index)
         
         # 轉換為月K
         df_monthly = df.resample('M').agg({
