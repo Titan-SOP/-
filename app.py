@@ -2592,12 +2592,12 @@ def render_data():
 # --- 🧠 元趨勢戰法 (Meta-Trend) [V82.1 幾何引擎啟動版] ---
 @st.fragment
 # ==========================================
-# [V83.5] AI 參謀本部 (Universal Model Version)
+# [V83.6] AI 參謀本部 (Connection Test Version)
 # ==========================================
 class TitanAgentCouncil:
     """
-    [自動相容版] 具備模型自動退避機制。
-    會依序嘗試 1.5 Pro, 1.5 Flash, 2.0 Flash 直到成功。
+    [實彈測試版] 初始化時強制測試連線。
+    確保模型回應成功後才鎖定，徹底解決 404 錯誤。
     """
     def __init__(self, ticker, rating, angle, r_squared, api_key):
         self.ticker = ticker
@@ -2606,30 +2606,34 @@ class TitanAgentCouncil:
         self.r_squared = r_squared
         self.api_key = api_key
         self.model = None
+        self.model_name = "Unknown"
 
         if self.api_key:
             try:
                 import google.generativeai as genai
                 genai.configure(api_key=self.api_key)
                 
-                # --- 戰術退避機制 (Fallback Chain) ---
-                # 優先嘗試 1.5 Pro (最聰明)，若失敗則試 Flash (最快)，再失敗則試 2.0
+                # 候選清單：優先使用標準版名稱，避開不穩定的 latest
                 model_candidates = [
-                    'gemini-1.5-pro-latest', 
-                    'gemini-1.5-flash-latest',
-                    'gemini-1.5-pro',
-                    'gemini-1.5-flash',
-                    'gemini-2.0-flash-exp' # 最新實驗版
+                    'gemini-1.5-flash',       # 速度快且最穩定 (優先)
+                    'gemini-1.5-pro',         # 智能最高
+                    'gemini-2.0-flash-exp',   # 新版實驗性
+                    'gemini-1.5-flash-latest' # 備用
                 ]
                 
+                # 迴圈測試：真的打通電話才算數
                 for m_name in model_candidates:
                     try:
-                        test_model = genai.GenerativeModel(m_name)
-                        # 簡單測試模型是否可用 (不消耗 Tokens，僅初始化)
-                        self.model = test_model
-                        self.active_model_name = m_name
-                        break # 成功找到可用模型，跳出迴圈
-                    except:
+                        temp_model = genai.GenerativeModel(m_name)
+                        # 關鍵動作：發送極短訊號測試連線 (Ping)
+                        temp_model.generate_content("hi") 
+                        
+                        # 如果上面沒報錯，代表通了！
+                        self.model = temp_model
+                        self.model_name = m_name
+                        break 
+                    except Exception as e:
+                        # 此路不通，換下一個
                         continue
             except Exception as e:
                 self.model = None
@@ -2637,14 +2641,13 @@ class TitanAgentCouncil:
     def _call_gemini(self, prompt, role_name):
         """通用 LLM 呼叫函式"""
         if not self.model:
-            return f"⚠️ **{role_name}**: (無可用 AI 模型，請檢查 API Key 或額度)"
+            return f"⚠️ **{role_name}**: (AI 啟動失敗，所有模型線路皆不通。請檢查 API Key 或額度。)"
         
         try:
             response = self.model.generate_content(prompt)
             return response.text
         except Exception as e:
-            # 再次嘗試備援邏輯 (若執行中出錯)
-            return f"⚠️ **{role_name}**: (AI 思緒中斷: {str(e)})"
+            return f"⚠️ **{role_name}**: (連線中斷 [{self.model_name}]: {str(e)})"
 
     def _get_bull_argument(self):
         """生成多頭論點"""
@@ -2690,7 +2693,7 @@ class TitanAgentCouncil:
         **權重**: 幾何40% / 線性30% / 辯論30%。
         
         **輸出 Markdown**:
-        1. **戰場總結**: 50至100字點評。
+        1. **戰場總結**: 一句話點評。
         2. **最終裁決**: 【強力買進/分批佈局/觀望/減碼】。
         3. **戰術指令**: 具體操作建議。
         """
