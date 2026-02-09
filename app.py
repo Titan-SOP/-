@@ -2592,12 +2592,12 @@ def render_data():
 # --- 🧠 元趨勢戰法 (Meta-Trend) [V82.1 幾何引擎啟動版] ---
 @st.fragment
 # ==========================================
-# [V83.4] AI 參謀本部 (Live AI Version)
+# [V83.5] AI 參謀本部 (Universal Model Version)
 # ==========================================
 class TitanAgentCouncil:
     """
-    [實戰版] 真實調用 Gemini API 進行多智能體辯論。
-    具備幾何數據解析與多空對抗邏輯。
+    [自動相容版] 具備模型自動退避機制。
+    會依序嘗試 1.5 Pro, 1.5 Flash, 2.0 Flash 直到成功。
     """
     def __init__(self, ticker, rating, angle, r_squared, api_key):
         self.ticker = ticker
@@ -2605,98 +2605,94 @@ class TitanAgentCouncil:
         self.angle = angle
         self.r_squared = r_squared
         self.api_key = api_key
-        
-        # 初始化 Gemini 模型
+        self.model = None
+
         if self.api_key:
             try:
                 import google.generativeai as genai
                 genai.configure(api_key=self.api_key)
-                self.model = genai.GenerativeModel('gemini-1.5-flash') # 使用 Flash 速度較快且便宜
+                
+                # --- 戰術退避機制 (Fallback Chain) ---
+                # 優先嘗試 1.5 Pro (最聰明)，若失敗則試 Flash (最快)，再失敗則試 2.0
+                model_candidates = [
+                    'gemini-1.5-pro-latest', 
+                    'gemini-1.5-flash-latest',
+                    'gemini-1.5-pro',
+                    'gemini-1.5-flash',
+                    'gemini-2.0-flash-exp' # 最新實驗版
+                ]
+                
+                for m_name in model_candidates:
+                    try:
+                        test_model = genai.GenerativeModel(m_name)
+                        # 簡單測試模型是否可用 (不消耗 Tokens，僅初始化)
+                        self.model = test_model
+                        self.active_model_name = m_name
+                        break # 成功找到可用模型，跳出迴圈
+                    except:
+                        continue
             except Exception as e:
                 self.model = None
-        else:
-            self.model = None
-
+        
     def _call_gemini(self, prompt, role_name):
         """通用 LLM 呼叫函式"""
         if not self.model:
-            return f"⚠️ **{role_name}**: (未偵測到 API Key。請在上方輸入您的 Key 以啟動 AI 大腦)"
+            return f"⚠️ **{role_name}**: (無可用 AI 模型，請檢查 API Key 或額度)"
         
         try:
-            # 設定 System Instruction 風格
             response = self.model.generate_content(prompt)
             return response.text
         except Exception as e:
-            return f"⚠️ **{role_name}**: (連線錯誤，可能是 Key 無效或額度不足 - {str(e)})"
+            # 再次嘗試備援邏輯 (若執行中出錯)
+            return f"⚠️ **{role_name}**: (AI 思緒中斷: {str(e)})"
 
     def _get_bull_argument(self):
-        """生成多頭論點 (Real AI)"""
+        """生成多頭論點"""
         prompt = f"""
-        你現在是 Titan 戰情室的【多頭司令 (The Visionary)】。
+        你現在是 Titan 戰情室的【多頭司令】。
         
-        **任務**: 針對標的 **{self.ticker}**，根據以下幾何數據，建立一個激進的看多論點。
+        **任務**: 針對標的 **{self.ticker}**，根據以下數據建立激進看多論點。
+        **數據**: 評級: {self.rating}, 角度: {self.angle:.2f}°, R²: {self.r_squared:.3f}。
         
-        **幾何戰情數據**:
-        - **泰坦信評**: {self.rating}
-        - **短期趨勢角度**: {self.angle:.2f}° (這是趨勢的加速度)
-        - **趨勢線性度 (R²)**: {self.r_squared:.3f} (這是趨勢的穩定度，滿分1.0)
-        
-        **發言準則**:
-        1. 語氣要**激昂、充滿信心**，你是趨勢的信徒。
-        2. 如果角度 > 45度，強調這是「主升段噴出」。
-        3. 如果 R² > 0.8，強調這是「機構鎖碼，籌碼安定」。
-        4. 請用不到 150 字，說服總指揮官現在就是買點。
-        
-        請開始你的發言：
+        **要求**:
+        1. 語氣激昂自信。
+        2. 若角度>45度強調主升段。
+        3. 150字以內。
         """
         return self._call_gemini(prompt, "多頭司令")
 
     def _get_bear_argument(self, bull_argument):
-        """生成空頭反駁論點 (Real AI)"""
+        """生成空頭反駁論點"""
         prompt = f"""
-        你現在是 Titan 戰情室的【空頭憲兵 (The Cynic)】。
+        你現在是 Titan 戰情室的【空頭憲兵】。
         
-        **任務**: 針對標的 **{self.ticker}**，狠狠反駁多頭司令的觀點。
+        **任務**: 針對 **{self.ticker}**，反駁多頭論點。
+        **多頭說**: "{bull_argument}"
+        **數據**: 評級: {self.rating}, 角度: {self.angle:.2f}°, R²: {self.r_squared:.3f}。
         
-        **多頭剛才說**:
-        "{bull_argument}"
-        
-        **幾何戰情數據**:
-        - **泰坦信評**: {self.rating}
-        - **短期趨勢角度**: {self.angle:.2f}°
-        - **趨勢線性度 (R²)**: {self.r_squared:.3f}
-        
-        **發言準則**:
-        1. 語氣要**冷靜、尖酸、一針見血**，你是風險的守門員。
-        2. 指出「乖離過大」的風險。角度越陡，摔得越重。
-        3. 提醒「均值回歸」是地心引力的必然。
-        4. 請用不到 150 字，警告總指揮官不要追高。
-        
-        請開始你的反擊：
+        **要求**:
+        1. 語氣冷靜尖酸。
+        2. 強調乖離過大與追高風險。
+        3. 150字以內。
         """
         return self._call_gemini(prompt, "空頭憲兵")
 
     def _get_commander_verdict(self, bull_argument, bear_argument):
-        """生成總指揮官裁決 (Real AI)"""
+        """生成總指揮官裁決"""
         prompt = f"""
-        你現在是 Titan 戰情室的【總指揮官 (The Strategist)】。
+        你是 Titan 戰情室的【總指揮官】。
         
-        **任務**: 聽取雙方辯論，做出最終戰術裁決。
+        **任務**: 綜合數據與辯論做裁決。
+        **數據**: {self.ticker} (評級: {self.rating}, 角度: {self.angle:.2f}°, R²: {self.r_squared:.3f})
+        **多頭**: {bull_argument}
+        **空頭**: {bear_argument}
         
-        **幾何數據**: {self.ticker} (評級: {self.rating}, 角度: {self.angle:.2f}°, R²: {self.r_squared:.3f})
-        **多頭觀點**: {bull_argument}
-        **空頭觀點**: {bear_argument}
+        **權重**: 幾何40% / 線性30% / 辯論30%。
         
-        **裁決邏輯 (權重)**:
-        1. 幾何信評 (40%): 客觀趨勢最強。
-        2. 線性度 R² (30%): 穩定度高則偏多。
-        3. 辯論內容 (30%): 誰更有道理。
-        
-        **輸出要求**:
-        請以Markdown格式輸出：
-        1. **戰場總結**: 一句話點評雙方論點。
-        2. **最終裁決**: 【強力買進 / 分批佈局 / 觀望 / 減碼】(四選一)。
-        3. **戰術指令**: 給出一條具體的操作建議。
+        **輸出 Markdown**:
+        1. **戰場總結**: 50至100字點評。
+        2. **最終裁決**: 【強力買進/分批佈局/觀望/減碼】。
+        3. **戰術指令**: 具體操作建議。
         """
         return self._call_gemini(prompt, "總指揮官")
 
