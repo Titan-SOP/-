@@ -2611,6 +2611,22 @@ import google.generativeai as genai
 # [SLOT-6.1] 數據引擎 (Data Engine)
 # ==========================================
 
+def get_time_slice(df, months):
+    """
+    [修復] 精準切割最後 N 個月的數據片段
+    Args:
+        df: 月K DataFrame
+        months: 需要的月數
+    Returns:
+        切割後的 DataFrame
+    """
+    if df is None or df.empty:
+        return df
+    # 如果數據足夠長，取最後 N 個月；否則回傳全部
+    if len(df) >= months:
+        return df.iloc[-months:]
+    return df
+
 def download_full_history(ticker, start="1990-01-01"):
     """
     下載完整歷史月K線數據
