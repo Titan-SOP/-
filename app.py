@@ -2722,7 +2722,7 @@ def render_meta_trend():
         if user_api_key:
             st.session_state['api_key'] = user_api_key
             st.success("能量填充完畢！AI 參謀已就位。")
-            st.rerun()
+           
 
     def calculate_geometry_metrics(series):
         """計算趨勢的幾何角度與線性度(R²)，返回兩者"""
@@ -3003,8 +3003,8 @@ with st.sidebar:
     st.header("🧠 多源情報獵殺")
     api_key = st.text_input("輸入你的 Gemini API Key (選填)", type="password")
     uploaded_intel_files = st.file_uploader("2. 拖曳情報文件 (PDF, TXT)", type=['pdf', 'txt'], accept_multiple_files=True)
-    st.session_state['api_key'] = api_key
     st.session_state['intel_files'] = uploaded_intel_files
+    
 
 # --- Main App Router ---
 if st.session_state.page == 'home':
