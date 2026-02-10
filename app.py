@@ -2589,11 +2589,13 @@ def render_data():
         else:
             st.info("請上傳 CB 清單以掃描時間套利事件。")
 
-# --- 🧠 元趨勢戰法 (Meta-Trend) [V90.1 諸神黃昏最終版] ---
+# --- 🧠 元趨勢戰法 (Meta-Trend) [V90.2 瓦爾基里最終版] ---
 # ============================================================================================================
-# [V90.1 CRITICAL UPGRADE]:
-# - Tab 2: 戰略工廠 (Strategy Factory) - 全新 20 條第一性原則 + 9 個連結 + 情報上傳系統
-# - Tab 4: 全境獵殺 (The Hunter) - 新增索敵後嵌入式戰略參數設定介面
+# [V90.2 PROJECT VALKYRIE]:
+# - 新增 TitanIntelAgency 類別：自動抓取 Yahoo Finance 基本面與新聞
+# - Tab 2: 戰略工廠 - 新增「🤖 啟動瓦爾基里」按鈕，自動填充情報
+# - Tab 4: 全境獵殺 - 索敵區也支援自動情報抓取
+# - 完整保留 Slot 6.1/6.3/6.5/6.6 原有邏輯
 # ============================================================================================================
 
 import streamlit as st
@@ -2735,7 +2737,8 @@ def calculate_geometry_metrics(df, months):
 
 def compute_7d_geometry(ticker):
     """
-    計算 7 維度完整幾何掃描
+    [V90.2 核心] 計算 7 維度完整幾何掃描
+    使用 yf.download(period='max') 抓取全歷史數據
     
     Returns:
         dict: {
@@ -2902,12 +2905,255 @@ def titan_rating_system(geo):
 
 
 # ==========================================
+# [V90.2 新增] 情報局 (TitanIntelAgency)
+# ==========================================
+
+class TitanIntelAgency:
+    """
+    [V90.2 PROJECT VALKYRIE] 自動情報抓取引擎
+    功能：抓取 Yahoo Finance 基本面數據與最新新聞
+    """
+    def __init__(self):
+        self.ticker_obj = None
+    
+    def fetch_full_report(self, ticker):
+        """
+        抓取完整情報報告
+        
+        Args:
+            ticker: 股票代號 (支援台股與美股)
+        
+        Returns:
+            str: Markdown 格式的完整報告
+        """
+        try:
+            # 處理台股代號
+            original_ticker = ticker
+            if ticker.isdigit() and len(ticker) >= 4:
+                ticker = f"{ticker}.TW"
+            
+            # 初始化 Ticker
+            self.ticker_obj = yf.Ticker(ticker)
+            
+            # 如果上市沒數據，嘗試上櫃
+            try:
+                test_info = self.ticker_obj.info
+                if not test_info or 'symbol' not in test_info:
+                    if original_ticker.isdigit() and len(original_ticker) >= 4:
+                        ticker = f"{original_ticker}.TWO"
+                        self.ticker_obj = yf.Ticker(ticker)
+            except:
+                if original_ticker.isdigit() and len(original_ticker) >= 4:
+                    ticker = f"{original_ticker}.TWO"
+                    self.ticker_obj = yf.Ticker(ticker)
+            
+            # 抓取基本面數據
+            fundamentals = self._fetch_fundamentals()
+            
+            # 抓取新聞
+            news = self._fetch_news()
+            
+            # 組合報告
+            report = self._generate_report(ticker, fundamentals, news)
+            
+            return report
+        
+        except Exception as e:
+            return f"❌ **情報抓取失敗**\n\n錯誤訊息: {str(e)}\n\n請確認股票代號是否正確，或手動貼上情報。"
+    
+    def _fetch_fundamentals(self):
+        """
+        抓取基本面數據
+        
+        Returns:
+            dict: 基本面指標
+        """
+        try:
+            info = self.ticker_obj.info
+            
+            fundamentals = {
+                '市值': info.get('marketCap', 'N/A'),
+                '現價': info.get('currentPrice', 'N/A'),
+                'Forward PE': info.get('forwardPE', 'N/A'),
+                'PEG Ratio': info.get('pegRatio', 'N/A'),
+                '營收成長 (YoY)': info.get('revenueGrowth', 'N/A'),
+                '毛利率': info.get('grossMargins', 'N/A'),
+                '營業利益率': info.get('operatingMargins', 'N/A'),
+                'ROE': info.get('returnOnEquity', 'N/A'),
+                '負債比': info.get('debtToEquity', 'N/A'),
+                '自由現金流': info.get('freeCashflow', 'N/A'),
+                '機構目標價': info.get('targetMeanPrice', 'N/A'),
+                '52週高點': info.get('fiftyTwoWeekHigh', 'N/A'),
+                '52週低點': info.get('fiftyTwoWeekLow', 'N/A'),
+                '產業': info.get('industry', 'N/A'),
+                '公司簡介': info.get('longBusinessSummary', 'N/A')
+            }
+            
+            return fundamentals
+        
+        except Exception as e:
+            return {'錯誤': str(e)}
+    
+    def _fetch_news(self):
+        """
+        抓取最新新聞 (最多 5 則)
+        
+        Returns:
+            list: 新聞列表
+        """
+        try:
+            news_list = self.ticker_obj.news
+            
+            if not news_list:
+                return []
+            
+            # 取前 5 則
+            top_news = news_list[:5]
+            
+            formatted_news = []
+            for item in top_news:
+                title = item.get('title', 'N/A')
+                publisher = item.get('publisher', 'N/A')
+                link = item.get('link', '#')
+                
+                # 轉換時間戳
+                timestamp = item.get('providerPublishTime', 0)
+                if timestamp:
+                    publish_time = datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M')
+                else:
+                    publish_time = 'N/A'
+                
+                formatted_news.append({
+                    'title': title,
+                    'publisher': publisher,
+                    'time': publish_time,
+                    'link': link
+                })
+            
+            return formatted_news
+        
+        except Exception as e:
+            return []
+    
+    def _generate_report(self, ticker, fundamentals, news):
+        """
+        生成 Markdown 格式報告
+        
+        Args:
+            ticker: 股票代號
+            fundamentals: 基本面數據
+            news: 新聞列表
+        
+        Returns:
+            str: Markdown 報告
+        """
+        report = f"""# 🤖 瓦爾基里情報報告 (Valkyrie Intel Report)
+**標的代號**: {ticker}
+**抓取時間**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+---
+
+## 📊 基本面數據 (Fundamentals)
+
+"""
+        
+        # 基本面表格
+        if '錯誤' in fundamentals:
+            report += f"❌ 基本面數據抓取失敗: {fundamentals['錯誤']}\n\n"
+        else:
+            # 市值與估值
+            market_cap = fundamentals.get('市值', 'N/A')
+            if isinstance(market_cap, (int, float)):
+                market_cap_str = f"${market_cap / 1e9:.2f}B" if market_cap > 1e9 else f"${market_cap / 1e6:.2f}M"
+            else:
+                market_cap_str = str(market_cap)
+            
+            report += f"**市值**: {market_cap_str}\n"
+            report += f"**現價**: ${fundamentals.get('現價', 'N/A')}\n"
+            report += f"**Forward PE**: {fundamentals.get('Forward PE', 'N/A')}\n"
+            report += f"**PEG Ratio**: {fundamentals.get('PEG Ratio', 'N/A')}\n"
+            report += f"**機構目標價**: ${fundamentals.get('機構目標價', 'N/A')}\n\n"
+            
+            # 成長性與獲利能力
+            revenue_growth = fundamentals.get('營收成長 (YoY)', 'N/A')
+            if isinstance(revenue_growth, (int, float)):
+                revenue_growth_str = f"{revenue_growth * 100:.2f}%"
+            else:
+                revenue_growth_str = str(revenue_growth)
+            
+            gross_margin = fundamentals.get('毛利率', 'N/A')
+            if isinstance(gross_margin, (int, float)):
+                gross_margin_str = f"{gross_margin * 100:.2f}%"
+            else:
+                gross_margin_str = str(gross_margin)
+            
+            operating_margin = fundamentals.get('營業利益率', 'N/A')
+            if isinstance(operating_margin, (int, float)):
+                operating_margin_str = f"{operating_margin * 100:.2f}%"
+            else:
+                operating_margin_str = str(operating_margin)
+            
+            roe = fundamentals.get('ROE', 'N/A')
+            if isinstance(roe, (int, float)):
+                roe_str = f"{roe * 100:.2f}%"
+            else:
+                roe_str = str(roe)
+            
+            report += f"**營收成長 (YoY)**: {revenue_growth_str}\n"
+            report += f"**毛利率**: {gross_margin_str}\n"
+            report += f"**營業利益率**: {operating_margin_str}\n"
+            report += f"**ROE**: {roe_str}\n\n"
+            
+            # 財務健康度
+            debt_to_equity = fundamentals.get('負債比', 'N/A')
+            free_cashflow = fundamentals.get('自由現金流', 'N/A')
+            if isinstance(free_cashflow, (int, float)):
+                fcf_str = f"${free_cashflow / 1e9:.2f}B" if free_cashflow > 1e9 else f"${free_cashflow / 1e6:.2f}M"
+            else:
+                fcf_str = str(free_cashflow)
+            
+            report += f"**負債比**: {debt_to_equity}\n"
+            report += f"**自由現金流**: {fcf_str}\n\n"
+            
+            # 價格區間
+            report += f"**52週高點**: ${fundamentals.get('52週高點', 'N/A')}\n"
+            report += f"**52週低點**: ${fundamentals.get('52週低點', 'N/A')}\n\n"
+            
+            # 產業與簡介
+            report += f"**產業**: {fundamentals.get('產業', 'N/A')}\n\n"
+            
+            business_summary = fundamentals.get('公司簡介', 'N/A')
+            if business_summary != 'N/A' and len(business_summary) > 200:
+                business_summary = business_summary[:200] + "..."
+            report += f"**公司簡介**: {business_summary}\n\n"
+        
+        report += "---\n\n"
+        
+        # 新聞區塊
+        report += "## 📰 最新新聞 (Latest News)\n\n"
+        
+        if not news:
+            report += "⚠️ 未抓取到新聞，或該標的新聞較少。\n\n"
+        else:
+            for idx, item in enumerate(news, 1):
+                report += f"**{idx}. {item['title']}**\n"
+                report += f"   - 來源: {item['publisher']}\n"
+                report += f"   - 時間: {item['time']}\n"
+                report += f"   - [閱讀全文]({item['link']})\n\n"
+        
+        report += "---\n\n"
+        report += "💡 **使用提示**: 以上數據由 Yahoo Finance 自動抓取，請搭配人工判斷使用。\n"
+        
+        return report
+
+
+# ==========================================
 # [SLOT-6.4] AI 參謀本部 (TitanAgentCouncil)
 # ==========================================
 
 class TitanAgentCouncil:
     """
-    V90.1 升級版: 五權分立角鬥士系統 + 20 條第一性原則
+    V90.2 升級版: 五權分立角鬥士系統 + 20 條第一性原則
     具備: 幾何死神(Quant), 內部人(Insider), 大賣空(Burry), 創世紀(Visionary), 上帝裁決(Arbiter)
     """
     def __init__(self, api_key=None):
@@ -2917,7 +3163,7 @@ class TitanAgentCouncil:
         if api_key:
             try:
                 genai.configure(api_key=api_key)
-                # V90.1: 優先使用最新的 Gemini 2.0 Flash
+                # V90.2: 優先使用最新的 Gemini 2.0 Flash
                 try:
                     self.model = genai.GenerativeModel('gemini-2.0-flash-exp')
                 except:
@@ -2928,16 +3174,16 @@ class TitanAgentCouncil:
 
     def generate_battle_prompt(self, ticker, price, geo_data, rating_info, intel_text="", commander_note="", selected_principles=None):
         """
-        [V90.1 核心] 生成史詩級辯論提示詞 (Anti-Laziness Protocol Enforced)
+        [V90.2 核心] 生成史詩級辯論提示詞 (Anti-Laziness Protocol Enforced)
         
         Args:
             ticker: 股票代號
             price: 當前價格
             geo_data: 7D 幾何數據
             rating_info: (level, name, desc, color)
-            intel_text: 法說會/財報情報
+            intel_text: 法說會/財報情報 (含瓦爾基里自動抓取的內容)
             commander_note: 統帥第一性原則筆記
-            selected_principles: 選擇的第一性原則清單 (V90.1 新增)
+            selected_principles: 選擇的第一性原則清單
         """
         level, name, desc, color = rating_info
         
@@ -2955,7 +3201,7 @@ class TitanAgentCouncil:
 Phoenix 信號: {'🔥 觸發' if geo_data['phoenix_signal'] else '❄️ 未觸發'}
 """
         
-        # [V90.1 新增] 第一性原則格式化
+        # 第一性原則格式化
         principles_str = ""
         if selected_principles:
             principles_str = "\n## 🎯 統帥指定第一性原則 (必須回答)\n"
@@ -2963,10 +3209,10 @@ Phoenix 信號: {'🔥 觸發' if geo_data['phoenix_signal'] else '❄️ 未觸
                 principles_str += f"{idx}. {principle}\n"
         
         prompt = f"""
-# 🏛️ Titan Protocol V90.1: 諸神黃昏戰情室 (The Ragnarök War Room)
+# 🏛️ Titan Protocol V90.2: 諸神黃昏戰情室 (The Ragnarök War Room)
 # 目標代號: {ticker} | 現價: ${price:.2f}
 
-你現在是 Titan 基金的「最高參謀本部」。我們正在決定是否要將此標的納入「2033 後百倍股」的核心持倉。
+你現在是 Titan 基金的「最高參謀本部」。我們正在決定是否要將此標的納入「2033 百倍股」的核心持倉。
 這不是普通的分析，這是一場 **生死辯論**。
 
 ## 📊 戰場地形 (幾何數據)
@@ -2979,7 +3225,7 @@ Phoenix 信號: {'🔥 觸發' if geo_data['phoenix_signal'] else '❄️ 未觸
 (這是基於 22 階信評系統的初步判定，各位角鬥士可以挑戰或支持此評級)
 
 ## 🕵️ 實彈情報 (Insider Intel)
-(以下資料來自法說會/財報/新聞，必須被引用作為攻擊或防禦的武器)
+(以下資料來自法說會/財報/新聞/瓦爾基里自動抓取，必須被引用作為攻擊或防禦的武器)
 {intel_text if intel_text else "無外部情報注入，請基於幾何數據與你的知識庫進行推演。"}
 {principles_str}
 
@@ -2994,11 +3240,11 @@ Phoenix 信號: {'🔥 觸發' if geo_data['phoenix_signal'] else '❄️ 未觸
 請扮演以下五位角色，進行一場**史詩級的對話 (Epic Debate)**。
 
 **【絕對規則 (Anti-Laziness Protocol)】**
-1. **字數強制**：每一位角色的發言 **不得少於 500 字** (Arbiter 需 800 字以上)。
+1. **字數強制**：每一位角色的發言 **不得少於 800 字** (Arbiter 需 1000 字以上)。
 2. **禁止客套**：這是一場你死我活的辯論。Burry 必須尖酸刻薄，Visionary 必須狂熱，Insider 必須狡猾。
 3. **第一性原則**：所有論點必須回歸物理極限、現金流本質與技術邊界，禁止使用模糊的金融術語。
 4. **數據引用**：每個論點必須明確引用上方的幾何數據或實彈情報。
-5. **互動續寫 (V90.1 新增)**：每位角色發言時，必須引用前一位角色的觀點並進行反駁或補充，確保辯論連續性。
+5. **互動續寫**：每位角色發言時，必須引用前一位角色的觀點並進行反駁或補充，確保辯論連續性。
 
 ### 角色定義：
 
@@ -3006,32 +3252,32 @@ Phoenix 信號: {'🔥 觸發' if geo_data['phoenix_signal'] else '❄️ 未觸
 * **性格**：冷血、無情、只相信數學。
 * **任務**：根據上方的幾何數據 (35Y, 10Y, 3M 斜率與加速度)，判斷股價是否過熱？R² 是否穩定？
 * **口頭禪**：「數據不會說謊，人類才會。」
-* **論點要求**：至少 500 字，必須引用具體角度與 R² 數值。
+* **論點要求**：至少 800 字，必須引用具體角度與 R² 數值。必須分析 7 個時間窗口的趨勢一致性。
 
 **2. 【內部操盤手】(The Insider - CEO/CFO 化身)**
 * **性格**：防禦性強、報喜不報憂、擅長畫大餅。
 * **任務**：利用「實彈情報」中的數據，護航公司的成長故事。解釋為何現在是買點？
 * **對抗**：當 Burry 攻擊估值時，你要拿出營收成長率反擊。並且必須引用 Quant 的幾何數據來支持你的觀點。
-* **論點要求**：至少 500 字，若無實彈情報則從行業趨勢切入。
+* **論點要求**：至少 800 字，若無實彈情報則從行業趨勢切入。必須引用瓦爾基里提供的基本面數據 (如毛利率、ROE)。
 
 **3. 【大賣空獵人】(The Big Short - Michael Burry 化身)**
 * **性格**：極度悲觀、被害妄想、尋找崩盤的前兆。
 * **任務**：攻擊「內部人」的謊言。找出估值泡沫、毛利下滑、宏觀衰退的訊號。你必須引用 Insider 的論點並逐一駁斥。
 * **第一性原則**：均值回歸是宇宙鐵律。所有拋物線最終都會墜毀。
-* **論點要求**：至少 500 字，必須質疑信評等級的合理性。
+* **論點要求**：至少 800 字，必須質疑信評等級的合理性。必須指出瓦爾基里數據中的風險點 (如負債比過高)。
 
 **4. 【創世紀先知】(The Visionary - Cathie Wood/Elon Musk 化身)**
 * **性格**：狂熱、指數級思維、無視短期虧損。
 * **任務**：使用「萊特定律 (Wright's Law)」與「破壞式創新」來碾壓 Burry 的傳統估值。你必須引用 Burry 的悲觀論點並展示為何他錯了。
-* **論點**：別跟我談 PE，看 2033 年後的 TAM (潛在市場)。
-* **論點要求**：至少 500 字，必須展望未來 5-10 年的產業變革。
+* **論點**：別跟我談 PE，看 2033 年的 TAM (潛在市場)。
+* **論點要求**：至少 800 字，必須展望未來 5-10 年的產業變革。必須引用瓦爾基里提供的產業資訊與新聞動態。
 
 **5. 【地球頂點·全知者】(The Apex Arbiter - 查理·蒙格 + 科技七巨頭創辦人)**
 * **腦袋**：查理·蒙格 (反向思考) + 貝佐斯/馬斯克 (極致商業直覺)。
 * **任務**：你是最終法官。聽完前面四人的血戰後，結合「統帥第一性原則」，給出最終判決。你必須引用各方論點，並解釋為何某方的邏輯更有說服力。
 * **輸出格式**：
-    * **【戰場總結】**：(200 字評析各方論點的強弱，明確指出誰的論點最有力、誰的論點有漏洞)
-    * **【第一性原則裁決】**：(300 字回歸物理與商業本質的判斷，必須回答統帥指定的第一性原則問題)
+    * **【戰場總結】**：(300 字評析各方論點的強弱，明確指出誰的論點最有力、誰的論點有漏洞)
+    * **【第一性原則裁決】**：(400 字回歸物理與商業本質的判斷，必須回答統帥指定的第一性原則問題)
     * **【操作指令】**：
         - 行動方針：Strong Buy / Buy / Wait / Sell / Strong Sell
         - 進場價位：基於趨勢線乖離率建議 (具體數字)
@@ -3039,7 +3285,7 @@ Phoenix 信號: {'🔥 觸發' if geo_data['phoenix_signal'] else '❄️ 未觸
         - 停利價位：明確數字
         - 持倉建議：輕倉/標準倉/重倉/空倉
         - 風險提示：[3 個關鍵風險]
-* **論點要求**：至少 800 字，必須展現真正的智慧而非模板化結論。
+* **論點要求**：至少 1000 字，必須展現真正的智慧而非模板化結論。必須整合瓦爾基里的基本面、新聞與幾何數據。
 
 ---
 
@@ -3050,35 +3296,35 @@ Phoenix 信號: {'🔥 觸發' if geo_data['phoenix_signal'] else '❄️ 未觸
 ```
 ## 🤖 幾何死神 (The Quant)
 
-[500+ 字的冷血數學分析]
+[800+ 字的冷血數學分析，必須分析 7 個時間窗口]
 
 ---
 
 ## 💼 內部操盤手 (The Insider)
 
-[500+ 字的成長故事護航，並引用 Quant 的數據]
+[800+ 字的成長故事護航，並引用 Quant 的數據與瓦爾基里基本面]
 
 ---
 
 ## 🐻 大賣空獵人 (The Big Short)
 
-[500+ 字的悲觀攻擊，並駁斥 Insider 的論點]
+[800+ 字的悲觀攻擊，並駁斥 Insider 的論點，指出瓦爾基里數據中的風險]
 
 ---
 
 ## 🚀 創世紀先知 (The Visionary)
 
-[500+ 字的狂熱展望，並反駁 Burry 的悲觀]
+[800+ 字的狂熱展望，並反駁 Burry 的悲觀，引用產業趨勢與新聞]
 
 ---
 
 ## ⚖️ 地球頂點·全知者 (The Apex Arbiter)
 
 ### 【戰場總結】
-[200+ 字，評析各方論點]
+[300+ 字，評析各方論點，指出誰最有力]
 
 ### 【第一性原則裁決】
-[300+ 字，回答統帥指定的第一性原則問題]
+[400+ 字，回答統帥指定問題，整合瓦爾基里數據]
 
 ### 【操作指令】
 - **行動方針**: [Strong Buy / Buy / Wait / Sell / Strong Sell]
@@ -3091,7 +3337,7 @@ Phoenix 信號: {'🔥 觸發' if geo_data['phoenix_signal'] else '❄️ 未觸
 ---
 ```
 
-請開始你的表演。確保每個角色的論述都具有深度與獨特性，避免重複論點，並且每位角色都必須引用前面角色的觀點進行互動。
+請開始你的表演。確保每個角色的論述都具有深度與獨特性，避免重複論點，並且每位角色都必須引用前面角色的觀點進行互動。字數要求是最低門檻，請盡量詳細展開論述。
 """
         return prompt
     
@@ -3123,11 +3369,11 @@ Phoenix 信號: {'🔥 觸發' if geo_data['phoenix_signal'] else '❄️ 未觸
 def render_meta_trend():
     """
     元趨勢戰法 - 7維度幾何母港
-    [V90.1 諸神黃昏最終版]
+    [V90.2 瓦爾基里最終版]
     - Tab 1: 保留 V86.2 的全歷史對數回歸圖
-    - Tab 2: V90.1 升級 - 戰略工廠 (20 條第一性原則 + 9 個連結 + 情報上傳)
+    - Tab 2: V90.2 升級 - 戰略工廠 (新增瓦爾基里自動抓取)
     - Tab 3: 保留獵殺清單功能
-    - Tab 4: V90.1 升級 - 全境獵殺雷達 + 索敵後戰略參數設定
+    - Tab 4: V90.2 升級 - 全境獵殺雷達 + 索敵後自動抓取
     - Tab 5-6: 保留維修中狀態
     """
     # 返回首頁按鈕
@@ -3135,8 +3381,8 @@ def render_meta_trend():
         st.session_state.page = 'home'
         st.rerun()
     
-    st.title("🌌 元趨勢戰法 (V90.1 諸神黃昏)")
-    st.caption("全歷史幾何 × 五大角鬥士 × 20 條第一性原則 × 全境獵殺 | 核心目標：鎖定 2033 年後百倍股")
+    st.title("🌌 元趨勢戰法 (V90.2 瓦爾基里)")
+    st.caption("全歷史幾何 × 五大角鬥士 × 20 條第一性原則 × 🤖 自動情報抓取 | 核心目標：鎖定 2033 年百倍股")
     st.markdown("---")
     
     # ========== 標的輸入 ==========
@@ -3198,12 +3444,12 @@ def render_meta_trend():
     ])
     
     # ==========================================
-    # [TAB 1] 7D 幾何全景 - 全歷史對數回歸圖 (完全保留 V86.2)
+    # [TAB 1] 7D 幾何全景 (完全保留)
     # ==========================================
     with tab1:
         st.subheader("📐 七維度幾何儀表板")
         
-        # ===== 保留區：信評卡片 =====
+        # 信評卡片
         st.markdown(f"""
         <div style='background-color: {rating[3]}; padding: 20px; border-radius: 10px; text-align: center;'>
             <h2 style='color: white; margin: 0;'>{rating[0]}</h2>
@@ -3214,7 +3460,7 @@ def render_meta_trend():
         
         st.markdown("---")
         
-        # ===== 保留區：7 個維度的角度顯示 =====
+        # 7 個維度的角度顯示
         periods = ['35Y', '10Y', '5Y', '3Y', '1Y', '6M', '3M']
         
         # 建立 4x2 網格
@@ -3247,7 +3493,7 @@ def render_meta_trend():
                         </div>
                         """, unsafe_allow_html=True)
         
-        # ===== 保留區：加速度與 Phoenix 信號 =====
+        # 加速度與 Phoenix 信號
         st.markdown("---")
         col_acc, col_phx = st.columns(2)
         
@@ -3274,7 +3520,7 @@ def render_meta_trend():
             </div>
             """, unsafe_allow_html=True)
         
-        # ===== [V86.2 保留] 全歷史對數線性回歸圖 =====
+        # 全歷史對數線性回歸圖
         st.markdown("---")
         st.subheader("📈 全歷史對數線性回歸 (上帝軌道)")
         
@@ -3382,35 +3628,35 @@ def render_meta_trend():
             st.warning("⚠️ 請先執行掃描以載入數據。")
     
     # ==========================================
-    # [TAB 2] 戰略工廠 - V90.1 全新升級
+    # [TAB 2] 戰略工廠 - V90.2 瓦爾基里升級
     # ==========================================
     with tab2:
         st.header("🏭 戰略工廠 (Strategy Factory)")
-        st.caption("20 條第一性原則 × 9 個快捷連結 × 情報上傳系統 × 完整提示詞生成")
+        st.caption("🤖 V90.2 瓦爾基里：自動情報抓取 × 20 條第一性原則 × 9 個快捷連結")
         
         st.markdown("---")
         
-        # [V90.1 核心] 左右分欄佈局
+        # 左右分欄佈局
         col_params, col_output = st.columns([1, 2])
         
         with col_params:
             st.subheader("⚙️ 戰略參數設定")
             
-            # ========== [V90.1 新增] 9 個連結區 ==========
+            # ========== 9 個連結區 ==========
             with st.expander("🔗 智能快捷連結 (9 個必備資源)", expanded=True):
                 st.markdown("**📊 財務數據與圖表**:")
                 
-                # TradingView
+                # 1. TradingView
                 st.markdown(f"""
                 1. **[TradingView](https://www.tradingview.com/chart/?symbol={ticker})** - 技術圖表與指標分析
                 """)
                 
-                # Finviz
+                # 2. Finviz
                 st.markdown(f"""
                 2. **[Finviz](https://finviz.com/quote.ashx?t={ticker})** - 美股視覺化看板
                 """)
                 
-                # Yahoo Finance
+                # 3. Yahoo Finance
                 if ticker.endswith('.TW') or ticker.endswith('.TWO'):
                     ticker_clean = ticker.replace('.TW', '').replace('.TWO', '')
                     st.markdown(f"""
@@ -3421,37 +3667,37 @@ def render_meta_trend():
                     3. **[Yahoo Finance](https://finance.yahoo.com/quote/{ticker})** - 完整財務報表與預測
                     """)
                 
-                # StockCharts
+                # 4. StockCharts
                 st.markdown(f"""
                 4. **[StockCharts](https://stockcharts.com/h-sc/ui?s={ticker})** - 專業技術分析工具
                 """)
                 
                 st.markdown("**📰 台股專屬資源**:")
                 
-                # 鉅亨網
+                # 5. 鉅亨網
                 ticker_clean = ticker.replace('.TW', '').replace('.TWO', '')
                 st.markdown(f"""
                 5. **[鉅亨網](https://invest.cnyes.com/twstock/TWS/{ticker_clean})** - 台股即時新聞與財報
                 """)
                 
-                # Goodinfo
+                # 6. Goodinfo
                 st.markdown(f"""
                 6. **[Goodinfo](https://goodinfo.tw/tw/StockDetail.asp?STOCK_ID={ticker_clean})** - 台股財務指標寶庫
                 """)
                 
-                # 公開資訊觀測站
+                # 7. 公開資訊觀測站
                 st.markdown(f"""
                 7. **[公開資訊觀測站](https://mops.twse.com.tw/mops/web/t05st03)** - 官方財報與法說會公告
                 """)
                 
                 st.markdown("**🎙️ 法說會與深度研究**:")
                 
-                # AlphaMemo
+                # 8. AlphaMemo
                 st.markdown(f"""
                 8. **[AlphaMemo](https://www.alphamemo.ai/free-transcripts)** - AI 法說會逐字稿分析
                 """)
                 
-                # SEC Edgar (美股)
+                # 9. SEC Edgar (美股) / 證券櫃檯買賣中心 (台股)
                 if not (ticker.endswith('.TW') or ticker.endswith('.TWO')):
                     st.markdown(f"""
                     9. **[SEC Edgar](https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={ticker})** - 美股官方 10-K/10-Q 文件
@@ -3463,27 +3709,45 @@ def render_meta_trend():
             
             st.divider()
             
-            # ========== [V90.1 新增] 情報注入區 ==========
-            with st.expander("🕵️ 多源情報注入 (Intel Upload)", expanded=True):
-                st.caption("貼上或上傳法說會/財報/研究報告，供 AI 參謀團使用")
+            # ========== [V90.2 核心] 情報注入區 + 瓦爾基里按鈕 ==========
+            with st.expander("🕵️ 多源情報注入 (Intel Upload) + 🤖 瓦爾基里", expanded=True):
+                st.caption("**選項 1**: 點擊瓦爾基里自動抓取 | **選項 2**: 手動貼上/上傳")
                 
-                # 文字輸入
-                intel_text_factory = st.text_area(
-                    "📝 手動貼上內容",
-                    height=150,
-                    placeholder="例如：Q3 法說會重點 - AI 伺服器營收 YoY +150%，但毛利率因散熱成本上升下降至 18%...",
-                    key="intel_text_factory"
-                )
+                # [V90.2 新增] 瓦爾基里自動抓取按鈕
+                if st.button("🤖 啟動瓦爾基里 (Auto-Fetch)", type="primary", use_container_width=True, key="valkyrie_btn_factory"):
+                    with st.spinner("🤖 瓦爾基里正在抓取情報..."):
+                        intel_agency = TitanIntelAgency()
+                        valkyrie_report = intel_agency.fetch_full_report(ticker)
+                        
+                        # 儲存到 session_state
+                        st.session_state.valkyrie_report_factory = valkyrie_report
+                        st.success("✅ 瓦爾基里情報抓取完成！")
+                
+                # 顯示瓦爾基里報告並允許編輯
+                if 'valkyrie_report_factory' in st.session_state:
+                    intel_text_factory = st.text_area(
+                        "📝 瓦爾基里情報 (可編輯)",
+                        value=st.session_state.valkyrie_report_factory,
+                        height=300,
+                        key="intel_text_factory_valkyrie"
+                    )
+                else:
+                    intel_text_factory = st.text_area(
+                        "📝 手動貼上內容",
+                        height=150,
+                        placeholder="例如：Q3 法說會重點 - AI 伺服器營收 YoY +150%...",
+                        key="intel_text_factory_manual"
+                    )
                 
                 # 檔案上傳
                 uploaded_files_factory = st.file_uploader(
-                    "📎 上傳文件 (PDF/Excel/Word)",
-                    type=['pdf', 'xlsx', 'xls', 'docx', 'doc'],
+                    "📎 上傳文件 (PDF/Excel/Word/Txt)",
+                    type=['pdf', 'xlsx', 'xls', 'docx', 'doc', 'txt'],
                     accept_multiple_files=True,
                     key="intel_files_factory"
                 )
                 
-                # 處理上傳檔案 (簡化版，實際應解析內容)
+                # 處理上傳檔案 (簡化版)
                 uploaded_content_factory = ""
                 if uploaded_files_factory:
                     for file in uploaded_files_factory:
@@ -3492,7 +3756,7 @@ def render_meta_trend():
             
             st.divider()
             
-            # ========== [V90.1 核心] 20 條第一性原則選擇器 ==========
+            # ========== 20 條第一性原則選擇器 ==========
             with st.expander("🎯 統帥第一性原則 (20 條完整清單)", expanded=True):
                 st.caption("選擇需要 AI 參謀團回答的原則 (可多選)")
                 
@@ -3517,7 +3781,7 @@ def render_meta_trend():
                     "[終極] 物理極限：成長是否受缺電/缺地/缺水限制？",
                     "[終極] 人才密度：能否吸引全球最聰明工程師？",
                     "[終極] 反脆弱性：遇黑天鵝(戰爭/疫情)是受傷還是獲利？",
-                    "[終極] 百倍股基因：2033 年後若活著，它會變成什麼樣子？"
+                    "[終極] 百倍股基因：2033 年若活著，它會變成什麼樣子？"
                 ]
                 
                 selected_principles_factory = st.multiselect(
@@ -3531,7 +3795,7 @@ def render_meta_trend():
             
             st.divider()
             
-            # ========== [V90.1 新增] 自由筆記區 ==========
+            # ========== 自由筆記區 ==========
             with st.expander("✍️ 統帥自由筆記 (Commander's Note)", expanded=False):
                 st.caption("補充任何額外的分析指令或偏好")
                 commander_note_factory = st.text_area(
@@ -3562,8 +3826,8 @@ def render_meta_trend():
             
             st.markdown("---")
             
-            # [V90.1 核心] 生成提示詞按鈕
-            if st.button("🚀 生成戰略提示詞", type="primary", use_container_width=True):
+            # 生成提示詞按鈕
+            if st.button("🚀 生成戰略提示詞", type="primary", use_container_width=True, key="gen_prompt_factory"):
                 # 合併情報
                 combined_intel_factory = intel_text_factory
                 if uploaded_content_factory:
@@ -3595,7 +3859,7 @@ def render_meta_trend():
                 st.download_button(
                     "💾 下載戰略提示詞 (.txt)",
                     battle_prompt_factory,
-                    file_name=f"TITAN_STRATEGY_{ticker}_{datetime.now().strftime('%Y%m%d_%H%M')}.txt",
+                    file_name=f"TITAN_VALKYRIE_{ticker}_{datetime.now().strftime('%Y%m%d_%H%M')}.txt",
                     mime="text/plain",
                     use_container_width=True
                 )
@@ -3609,13 +3873,13 @@ def render_meta_trend():
                 
                 **💡 提示詞包含**：
                 - 7D 幾何數據
-                - 您上傳的情報內容
+                - 瓦爾基里自動抓取的基本面與新聞
                 - 您選擇的第一性原則
-                - 五大角鬥士辯論框架
+                - 五大角鬥士辯論框架 (800字防偷懶協議)
                 """)
                 
                 # 統計資訊
-                st.caption(f"📊 提示詞統計：{len(battle_prompt_factory)} 字元 | 約 {len(battle_prompt_factory.split())} 詞")
+                st.caption(f"📊 提示詞統計：{len(battle_prompt_factory)} 字元")
     
     # ==========================================
     # [TAB 3] 獵殺清單 (完全保留)
@@ -3675,15 +3939,15 @@ def render_meta_trend():
             st.info("清單為空，尚無符合條件的標的。")
     
     # ==========================================
-    # [TAB 4] 全境獵殺 - V90.1 全新升級
+    # [TAB 4] 全境獵殺 - V90.2 瓦爾基里升級
     # ==========================================
     with tab4:
         st.subheader("🚀 全境獵殺雷達 (The Hunter)")
-        st.caption("V90.1 升級：掃描 + 索敵 + 嵌入式戰略參數設定")
+        st.caption("V90.2 升級：掃描 + 索敵 + 🤖 瓦爾基里自動情報")
         st.markdown("---")
 
         with st.expander("🎯 獵殺控制台 (Mission Control)", expanded=True):
-            # ========== 1. 戰區選擇 ==========
+            # 戰區選擇
             theater_options = list(WAR_THEATERS.keys())
             selected_theater = st.selectbox(
                 "選擇掃描戰區 (Select War Theater)",
@@ -3695,7 +3959,7 @@ def render_meta_trend():
                 stock_count = len(WAR_THEATERS[selected_theater])
                 st.info(f"已選擇戰區 **{selected_theater}**，包含 **{stock_count}** 檔潛力標的。")
 
-            # ========== 2. 啟動掃描按鈕 ==========
+            # 啟動掃描按鈕
             if st.button("🚀 啟動全境掃描", type="primary", use_container_width=True, key="start_hunt_btn"):
                 if not selected_theater:
                     st.warning("請先選擇一個戰區。")
@@ -3743,7 +4007,7 @@ def render_meta_trend():
                     st.session_state[f'hunt_results_{selected_theater}'] = pd.DataFrame(hunt_results)
                     st.success(f"✅ {selected_theater} 戰區掃描完成，發現 {len(hunt_results)} 個潛在目標！")
 
-        # ========== 顯示掃描結果 ==========
+        # 顯示掃描結果
         if f'hunt_results_{selected_theater}' in st.session_state:
             results_df_hunt = st.session_state[f'hunt_results_{selected_theater}']
             
@@ -3769,10 +4033,10 @@ def render_meta_trend():
                     mime='text/csv',
                 )
                 
-                # ========== [V90.1 新增] 索敵模式 ==========
+                # ========== [V90.2 升級] 索敵模式 + 瓦爾基里 ==========
                 st.markdown("---")
                 st.subheader("🎯 索敵模式 (Target Acquisition)")
-                st.caption("選擇目標後，立即進行戰略分析")
+                st.caption("選擇目標後，立即進行戰略分析 + 🤖 瓦爾基里情報")
                 
                 target_tickers = results_df_hunt["代號"].tolist()
                 selected_target = st.selectbox(
@@ -3799,7 +4063,7 @@ def render_meta_trend():
                         else:
                             st.error(f"❌ 無法載入 {selected_target} 的數據")
                 
-                # ========== [V90.1 核心] 嵌入式戰略參數介面 ==========
+                # 嵌入式戰略參數介面
                 if 'hunt_selected_target' in st.session_state:
                     target_ticker = st.session_state.hunt_selected_target
                     target_geo_data = st.session_state.hunt_target_geo
@@ -3824,14 +4088,32 @@ def render_meta_trend():
                     col_hunt_left, col_hunt_right = st.columns([1, 1])
                     
                     with col_hunt_left:
+                        # [V90.2 新增] 瓦爾基里按鈕
+                        st.markdown("**🤖 情報抓取**")
+                        if st.button("🤖 啟動瓦爾基里 (Auto-Fetch)", type="primary", use_container_width=True, key="valkyrie_btn_hunt"):
+                            with st.spinner("🤖 瓦爾基里正在抓取情報..."):
+                                intel_agency_hunt = TitanIntelAgency()
+                                valkyrie_report_hunt = intel_agency_hunt.fetch_full_report(target_ticker)
+                                
+                                # 儲存到 session_state
+                                st.session_state.valkyrie_report_hunt = valkyrie_report_hunt
+                                st.success("✅ 瓦爾基里情報抓取完成！")
+                        
                         # 情報注入
-                        st.markdown("**🕵️ 情報注入**")
-                        intel_text_hunt = st.text_area(
-                            "法說會/財報內容",
-                            height=120,
-                            placeholder="貼上情報...",
-                            key="intel_text_hunt"
-                        )
+                        if 'valkyrie_report_hunt' in st.session_state:
+                            intel_text_hunt = st.text_area(
+                                "瓦爾基里情報 (可編輯)",
+                                value=st.session_state.valkyrie_report_hunt,
+                                height=200,
+                                key="intel_text_hunt_valkyrie"
+                            )
+                        else:
+                            intel_text_hunt = st.text_area(
+                                "法說會/財報內容",
+                                height=120,
+                                placeholder="貼上情報或點擊瓦爾基里...",
+                                key="intel_text_hunt_manual"
+                            )
                         
                         # 統帥筆記
                         st.markdown("**✍️ 統帥筆記**")
@@ -3843,10 +4125,9 @@ def render_meta_trend():
                         )
                     
                     with col_hunt_right:
-                        # 第一性原則選擇
+                        # 第一性原則選擇 (精選 10 條)
                         st.markdown("**🎯 第一性原則 (精選版)**")
                         
-                        # 精選 10 條最重要的原則
                         essential_principles = [
                             "[成長] 萊特定律檢視：產量翻倍，成本是否下降 15%？",
                             "[成長] 非線性爆發點：用戶/算力是否呈指數級成長？",
@@ -3857,7 +4138,7 @@ def render_meta_trend():
                             "[泡沫] 敘事與現實乖離：CEO 提 AI 次數 vs 實際營收佔比。",
                             "[泡沫] 內部人逃生：高管是在買進還是賣出？",
                             "[終極] 不可替代性：若公司明天消失，世界有差嗎？",
-                            "[終極] 百倍股基因：2033 年後若活著，它會變成什麼樣子？"
+                            "[終極] 百倍股基因：2033 年若活著，它會變成什麼樣子？"
                         ]
                         
                         selected_principles_hunt = st.multiselect(
@@ -3937,6 +4218,7 @@ def render_meta_trend():
         """)
 
 # --- 🏠 戰情指揮首頁 (Home) [在此之前結束] ---
+
 
 @st.fragment
 def render_home():
