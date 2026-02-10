@@ -3033,6 +3033,330 @@ class TitanAgentCouncil:
 - **停損價位**: 
 - **持倉建議**: 
 - **風險提示**:
+請開始你的表演。
+"""
+return prompt
+==========================================
+[SLOT-6.5] 檔案讀取輔助函式
+==========================================
+def _read_uploaded_file_content(uploaded_file):
+"""Reads content from various file types."""
+try:
+file_type = uploaded_file.type
+if "pdf" in file_type:
+with pdfplumber.open(uploaded_file) as pdf:
+return "\n".join(page.extract_text() for page in pdf.pages)
+elif "text" in file_type:
+return uploaded_file.getvalue().decode("utf-8")
+elif "sheet" in file_type or "excel" in file_type:
+df = pd.read_excel(uploaded_file)
+return df.to_string()
+elif "csv" in file_type:
+df = pd.read_csv(uploaded_file)
+return df.to_string()
+elif "word" in file_type:
+doc = docx.Document(uploaded_file)
+return "\n".join([para.text for para in doc.paragraphs])
+else:
+return f"不支援的檔案格式: {file_type}"
+except Exception as e:
+return f"讀取檔案時發生錯誤: {e}"
+==========================================
+[SLOT-6.6] Tab 6 完整重構 (render_meta_trend)
+==========================================
+@st.fragment
+def render_meta_trend():
+"""
+元趨勢戰法 - 7維度幾何母港
+[V90.1 諸神黃昏版]
+"""
+if st.button("🏠 返回首頁", type="secondary"):
+st.session_state.page = 'home'
+st.rerun()
+code
+Code
+st.title("🌌 元趨勢戰法 (V90.1 諸神黃昏)")
+st.caption("全歷史幾何 × 五大角鬥士 × 全境獵殺 | 核心目標：鎖定 2033 年百倍股")
+st.markdown("---")
+
+col_input1, col_input2 = st.columns([3, 1])
+with col_input1:
+    ticker = st.text_input(
+        "🎯 輸入分析標的 (支援上市/上櫃/美股)",
+        value=st.session_state.get('meta_target', '2330'),
+        placeholder="例如: 2330 (上市), 5274 (上櫃), NVDA (美股)"
+    )
+    st.session_state.meta_target = ticker
+with col_input2:
+    st.write("")
+    st.write("")
+    scan_button = st.button("📐 啟動掃描", type="primary", use_container_width=True)
+
+if scan_button and ticker:
+    with st.spinner(f"正在下載 {ticker} 的完整歷史數據..."):
+        geo_results = compute_7d_geometry(ticker)
+        if geo_results is None:
+            st.error(f"❌ 無法獲取 {ticker} 的數據。已嘗試 .TW 和 .TWO，請檢查代號。")
+            if 'geometry_results' in st.session_state: del st.session_state['geometry_results']
+            if 'rating_info' in st.session_state: del st.session_state['rating_info']
+            return
+        rating_info = titan_rating_system(geo_results)
+        st.session_state.geometry_results = geo_results
+        st.session_state.rating_info = rating_info
+        st.success(f"✅ 掃描完成！信評等級: **{rating_info[0]} - {rating_info[1]}**")
+
+if 'geometry_results' not in st.session_state:
+    st.info("👆 請先輸入標的並啟動掃描。")
+    return
+
+geo = st.session_state.geometry_results
+rating = st.session_state.rating_info
+ticker = st.session_state.meta_target
+
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    "📐 7D 幾何全景", "🏭 戰略工廠", "📝 獵殺清單", "🚀 全境獵殺", "🔧 宏觀對沖", "🔧 回測沙盒"
+])
+
+with tab1:
+    st.subheader("📐 七維度幾何儀表板")
+    st.markdown(f"""
+    <div style='background-color: {rating[3]}; padding: 20px; border-radius: 10px; text-align: center;'>
+        <h2 style='color: white; margin: 0;'>{rating[0]}</h2>
+        <h3 style='color: white; margin: 5px 0;'>{rating[1]}</h3>
+        <p style='color: white; margin: 0;'>{rating[2]}</p>
+    </div>
+    """, unsafe_allow_html=True)
+    st.markdown("---")
+    periods = ['35Y', '10Y', '5Y', '3Y', '1Y', '6M', '3M']
+    for i in range(0, len(periods), 4):
+        cols = st.columns(4)
+        for j, col in enumerate(cols):
+            if i + j < len(periods):
+                period = periods[i + j]
+                angle = geo[period]['angle']
+                r2 = geo[period]['r2']
+                color = "#00FF00" if angle > 30 else "#ADFF2F" if angle > 0 else "#FFD700" if angle > -30 else "#FF4500"
+                with col:
+                    st.markdown(f"""
+                    <div style='background: linear-gradient(135deg, #2a2a2a 0%, #1a1a1a 100%); 
+                                padding: 15px; border-radius: 10px; border: 2px solid {color};
+                                text-align: center; margin-bottom: 10px;'>
+                        <h4 style='color: {color}; margin: 0;'>{period}</h4>
+                        <h1 style='color: white; margin: 5px 0; font-size: 36px;'>{angle}°</h1>
+                        <p style='color: #888; margin: 0; font-size: 12px;'>R² = {r2}</p>
+                    </div>
+                    """, unsafe_allow_html=True)
+    st.markdown("---")
+    col_acc, col_phx = st.columns(2)
+    with col_acc:
+        acc = geo['acceleration']
+        acc_color = "#00FF00" if acc > 0 else "#FF4500"
+        st.markdown(f"""
+        <div style='background-color: #2a2a2a; padding: 20px; border-radius: 10px; text-align: center;'>
+            <h4 style='color: #FFD700;'>⚡ 加速度</h4>
+            <h2 style='color: {acc_color}; margin: 10px 0;'>{acc}°</h2>
+            <p style='color: #888; font-size: 14px;'>3M - 1Y</p>
+        </div>
+        """, unsafe_allow_html=True)
+    with col_phx:
+        phoenix = geo['phoenix_signal']
+        phx_status = "🔥 是" if phoenix else "❄️ 否"
+        phx_color = "#FF6347" if phoenix else "#4682B4"
+        st.markdown(f"""
+        <div style='background-color: #2a2a2a; padding: 20px; border-radius: 10px; text-align: center;'>
+            <h4 style='color: #FFD700;'>🐦 Phoenix 信號</h4>
+            <h2 style='color: {phx_color}; margin: 10px 0;'>{phx_status}</h2>
+            <p style='color: #888; font-size: 14px;'>浴火重生模式</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+with tab2:
+    st.header("🏭 戰略工廠 (Strategy Factory)")
+    st.caption("注入情報與第一性原則，生成史詩級辯論提示詞")
+    
+    # A. 智能鏈接
+    with st.expander("🔗 **區域 A: 智能鏈接**", expanded=True):
+        ticker_clean = ticker.replace('.TW', '').replace('.TWO', '')
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown("""
+            #### 🇺🇸 美股情報源
+            - [TradingView](https://www.tradingview.com/symbols/{ticker}/)
+            - [Finviz](https://finviz.com/quote.ashx?t={ticker})
+            - [Yahoo Finance](https://finance.yahoo.com/quote/{ticker})
+            - [StockCharts](https://stockcharts.com/h-sc/ui?s={ticker})
+            - [SEC EDGAR](https://www.sec.gov/edgar/searchedgar/companysearch)
+            - [Discounting Cash Flows](https://www.discountingcashflows.com/company/{ticker}/)
+            """.format(ticker=ticker_clean))
+        with c2:
+            st.markdown("""
+            #### 🇹🇼 台股情報源
+            - [Goodinfo](https://goodinfo.tw/tw/StockDetail.asp?STOCK_ID={ticker})
+            - [鉅亨網 (Anue)](https://www.anue.com/tw/stock/{ticker})
+            - [AlphaMemo (逐字稿)](https://www.alphamemo.ai/free-transcripts)
+            """.format(ticker=ticker_clean))
+
+    # B. 情報注入
+    with st.expander("🕵️ **區域 B: 情報注入**", expanded=True):
+        intel_text_manual = st.text_area("手動貼上法說會摘要、財報數據或新聞", height=100)
+        uploaded_intel_file = st.file_uploader(
+            "或上傳情報文件 (PDF, TXT, CSV, XLSX, DOCX)",
+            type=['pdf', 'txt', 'csv', 'xlsx', 'docx']
+        )
+        intel_text_file = ""
+        if uploaded_intel_file:
+            st.success(f"✅ 已接收檔案: {uploaded_intel_file.name}")
+            intel_text_file = _read_uploaded_file_content(uploaded_intel_file)
+        
+        final_intel_text = f"{intel_text_manual}\n\n---(來自檔案: {uploaded_intel_file.name if uploaded_intel_file else '無'})---\n\n{intel_text_file}"
+
+    # C. 統帥第一性原則
+    with st.expander("✍️ **區域 C: 統帥第一性原則**", expanded=True):
+        first_principles = [
+            "[成長] 萊特定律檢視：產量翻倍，成本是否下降 15%？",
+            "[成長] 非線性爆發點：用戶/算力是否呈指數級成長？",
+            "[成長] TAM 邊界測試：若已達潛在市場 80%，為何還要買？",
+            "[成長] 邊際成本歸零：多服務一人的成本是否趨近零？",
+            "[成長] 網路效應：是否越多人用越好用？",
+            "[生存] 燒錢率生存測試：若 18 個月融不到資，會死嗎？",
+            "[生存] 研發含金量：R&D 是資產還是費用？",
+            "[生存] 客戶集中度風險：最大客戶砍單 50% 會如何？",
+            "[生存] 庫存周轉物理學：存貨週轉天數是否異常暴增？",
+            "[生存] 自由現金流真偽：扣除 SBC 後真的有賺錢嗎？",
+            "[泡沫] 均值回歸引力：利潤率若回歸平均，股價會腰斬嗎？",
+            "[泡沫] 敘事與現實乖離：CEO 提 AI 次數 vs 實際營收佔比。",
+            "[泡沫] 內部人逃生：高管是在買進還是賣出？",
+            "[泡沫] 債務槓桿壓力：利息覆蓋率是否低於 3？",
+            "[泡沫] 競爭紅海化：是否有低成本中國對手殺入？",
+            "[終極] 不可替代性：若公司明天消失，世界有差嗎？",
+            "[終極] 物理極限：成長是否受缺電/缺地/缺水限制？",
+            "[終極] 人才密度：能否吸引全球最聰明工程師？",
+            "[終極] 反脆弱性：遇黑天鵝(戰爭/疫情)是受傷還是獲利？",
+            "[終極] 百倍股基因：2033 年若活著，它會變成什麼樣子？"
+        ]
+        selected_principles = st.multiselect("選擇要注入的第一性原則 (可複選)", options=first_principles)
+        commander_note_auto = "\n".join(f"- {p}" for p in selected_principles)
+        commander_note = st.text_area("統帥筆記 (自動填入，可手動修改)", value=commander_note_auto, height=150)
+
+    # D. 輸出
+    st.markdown("---")
+    st.subheader("🚀 **區域 D: 輸出**")
+    if st.button("🔥 生成史詩級戰略提示詞", type="primary", use_container_width=True):
+        current_price = 0.0
+        if ticker in st.session_state.get('daily_price_data', {}):
+            df_daily = st.session_state.daily_price_data[ticker]
+            if df_daily is not None and not df_daily.empty:
+                current_price = df_daily['Close'].iloc[-1]
+        
+        council = TitanAgentCouncil()
+        battle_prompt = council.generate_battle_prompt(
+            ticker, current_price, geo, rating, final_intel_text, commander_note
+        )
+        st.session_state.battle_prompt = battle_prompt
+    
+    if 'battle_prompt' in st.session_state:
+        st.text_area("📋 複製此提示詞 (Ctrl+A, Ctrl+C) 到 Gemini / Claude", value=st.session_state.battle_prompt, height=300)
+        st.download_button(
+            "💾 下載戰略提示詞 (.txt)",
+            st.session_state.battle_prompt,
+            file_name=f"TITAN_PROMPT_{ticker}_{datetime.now().strftime('%Y%m%d')}.txt",
+            mime="text/plain"
+        )
+
+with tab3:
+    st.subheader("📝 條件式獵殺清單")
+    st.info("只有當幾何信評達到 **AA-** 或更高等級時，才會觸發『存入獵殺清單』的選項。")
+    high_ratings = ["SSS", "AAA", "Phoenix", "Launchpad", "AA+", "AA", "AA-"]
+    if any(hr in rating[0] for hr in high_ratings):
+        st.success(f"🎯 目標 `{ticker}` 符合獵殺標準！ (評級: **{rating[0]} - {rating[1]}**)")
+        if st.button(f"✅ 存入獵殺清單", type="primary"):
+            if 'kill_list' not in st.session_state: st.session_state.kill_list = []
+            if ticker not in st.session_state.kill_list:
+                st.session_state.kill_list.append(ticker)
+                st.toast(f"🎯 {ticker} 已加入！", icon="✅")
+            else:
+                st.toast(f"⚠️ {ticker} 已在清單中", icon="ℹ️")
+    else:
+        st.error(f"❌ 目標 `{ticker}` 未達標準 (評級: **{rating[0]} - {rating[1]}**)")
+    st.markdown("---")
+    st.subheader("📋 當前獵殺清單")
+    if 'kill_list' in st.session_state and st.session_state.kill_list:
+        for idx, target in enumerate(st.session_state.kill_list, 1):
+            col1, col2 = st.columns([4, 1])
+            with col1: st.markdown(f"**{idx}.** {target}")
+            with col2:
+                if st.button("🗑️", key=f"del_{target}"):
+                    st.session_state.kill_list.remove(target)
+                    st.rerun()
+    else:
+        st.info("清單為空。")
+
+with tab4:
+    st.subheader("🚀 全境獵殺雷達 (The Hunter)")
+    st.markdown("---")
+    
+    # This function is a placeholder for the actual implementation
+    def render_market_screener():
+        with st.expander("🎯 獵殺控制台 (Mission Control)", expanded=True):
+            theater_options = list(WAR_THEATERS.keys())
+            selected_theater = st.selectbox("選擇掃描戰區", options=theater_options)
+            
+            if selected_theater:
+                st.info(f"已選擇戰區 **{selected_theater}**，包含 **{len(WAR_THEATERS[selected_theater])}** 檔標的。")
+
+            if st.button("🚀 啟動全境掃描", type="primary", use_container_width=True):
+                if not selected_theater:
+                    st.warning("請先選擇一個戰區。")
+                else:
+                    tickers_to_scan = WAR_THEATERS[selected_theater]
+                    total_tickers = len(tickers_to_scan)
+                    hunt_results = []
+                    progress_bar = st.progress(0, text=f"掃描進度: 0/{total_tickers}")
+                    
+                    for i, t in enumerate(tickers_to_scan):
+                        geo_data = compute_7d_geometry(t)
+                        progress_bar.progress((i + 1) / total_tickers, text=f"掃描進度: {t} ({i+1}/{total_tickers})")
+                        if geo_data:
+                            current_price = 0.0
+                            if t in st.session_state.get('daily_price_data', {}) and not st.session_state.daily_price_data[t].empty:
+                                current_price = st.session_state.daily_price_data[t]['Close'].iloc[-1]
+                            match_type = None
+                            if geo_data['10Y']['angle'] < 10 and geo_data['3M']['angle'] > 45: match_type = "🔥 Phoenix"
+                            elif abs(geo_data['35Y']['angle']) < 15 and geo_data['acceleration'] > 20: match_type = "🦁 Awakening"
+                            elif geo_data['3M']['angle'] > 60: match_type = "🚀 Rocket"
+                            if match_type:
+                                hunt_results.append({
+                                    "代號": t, "現價": current_price, "35Y角度": geo_data['35Y']['angle'],
+                                    "10Y角度": geo_data['10Y']['angle'], "3M角度": geo_data['3M']['angle'],
+                                    "G力": geo_data['acceleration'], "型態": match_type
+                                })
+                    progress_bar.empty()
+                    st.session_state[f'hunt_results_{selected_theater}'] = pd.DataFrame(hunt_results)
+                    st.success(f"✅ {selected_theater} 戰區掃描完成，發現 {len(hunt_results)} 個目標！")
+
+        if f'hunt_results_{selected_theater}' in st.session_state:
+            results_df = st.session_state[f'hunt_results_{selected_theater}']
+            if not results_df.empty:
+                st.markdown("---")
+                st.markdown("### ⚔️ 戰果清單")
+                st.dataframe(results_df.style.format({
+                    "現價": "{:.2f}", "35Y角度": "{:.1f}°", "10Y角度": "{:.1f}°",
+                    "3M角度": "{:.1f}°", "G力": "{:+.1f}°"
+                }), use_container_width=True)
+                csv = results_df.to_csv(index=False).encode('utf-8')
+                st.download_button("📥 下載戰果 (CSV)", csv, f'hunter_results_{selected_theater}.csv', 'text/csv')
+            else:
+                st.info("未發現符合條件的目標。")
+
+    render_market_screener()
+
+with tab5:
+    st.subheader("🔧 宏觀對沖 (Macro Hedge)")
+    st.info("🚧 此功能正在開發中，敬請期待...")
+
+with tab6:
+    st.subheader("🔧 回測沙盒 (Backtest Sandbox)")
+    st.info("🚧 此功能正在開發中，敬請期待...")
 
 # --- 🏠 戰情指揮首頁 (Home) [V81.1 NEW] ---
 @st.fragment
