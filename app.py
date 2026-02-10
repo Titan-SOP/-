@@ -2589,13 +2589,13 @@ def render_data():
         else:
             st.info("請上傳 CB 清單以掃描時間套利事件。")
 
-# --- 🧠 元趨勢戰法 (Meta-Trend) [V90.2 瓦爾基里最終版] ---
+# --- 🧠 元趨勢戰法 (Meta-Trend) [V90.3 獵殺清單升級] ---
 # ============================================================================================================
-# [V90.2 PROJECT VALKYRIE]:
-# - 新增 TitanIntelAgency 類別：自動抓取 Yahoo Finance 基本面與新聞
-# - Tab 2: 戰略工廠 - 新增「🤖 啟動瓦爾基里」按鈕，自動填充情報
-# - Tab 4: 全境獵殺 - 索敵區也支援自動情報抓取
-# - 完整保留 Slot 6.1/6.3/6.5/6.6 原有邏輯
+# [V90.3 PROJECT VALKYRIE - Kill List Upgrade]:
+# - Slot 6.3 重構: 升級為「動態戰果追蹤系統」，可手動錄入 AI 裁決與目標價。
+# - Slot 6.3 儀表板: 即時覆核幾何數據 (3M Angle) 與當前價格，動態計算戰果。
+# - Slot 6.3 管理: 新增單筆資料刪除功能。
+# - 絕對防閹割: Slot 6.1, 6.2, 6.4, 6.5, 6.6 完整保留 V90.2 核心邏輯。
 # ============================================================================================================
 
 import streamlit as st
@@ -3369,19 +3369,17 @@ Phoenix 信號: {'🔥 觸發' if geo_data['phoenix_signal'] else '❄️ 未觸
 def render_meta_trend():
     """
     元趨勢戰法 - 7維度幾何母港
-    [V90.2 瓦爾基里最終版]
-    - Tab 1: 保留 V86.2 的全歷史對數回歸圖
-    - Tab 2: V90.2 升級 - 戰略工廠 (新增瓦爾基里自動抓取)
-    - Tab 3: 保留獵殺清單功能
-    - Tab 4: V90.2 升級 - 全境獵殺雷達 + 索敵後自動抓取
-    - Tab 5-6: 保留維修中狀態
+    [V90.3 獵殺清單升級]
+    - Tab 3: 升級為「動態戰果追蹤系統」，可手動錄入 AI 裁決與目標價。
+    - Tab 3: 儀表板即時覆核幾何數據 (3M Angle) 與當前價格，動態計算戰果。
+    - 完整保留 Slot 6.1/6.2/6.4/6.5/6.6 原有 V90.2 邏輯。
     """
     # 返回首頁按鈕
     if st.button("🏠 返回首頁", type="secondary"):
         st.session_state.page = 'home'
         st.rerun()
     
-    st.title("🌌 元趨勢戰法 (V90.2 瓦爾基里)")
+    st.title("🌌 元趨勢戰法 (V90.3 獵殺清單升級)")
     st.caption("全歷史幾何 × 五大角鬥士 × 20 條第一性原則 × 🤖 自動情報抓取 | 核心目標：鎖定 2033 年百倍股")
     st.markdown("---")
     
@@ -3628,7 +3626,7 @@ def render_meta_trend():
             st.warning("⚠️ 請先執行掃描以載入數據。")
     
     # ==========================================
-    # [TAB 2] 戰略工廠 - V90.2 瓦爾基里升級
+    # [TAB 2] 戰略工廠 - V90.2 瓦爾基里升級 (完全保留)
     # ==========================================
     with tab2:
         st.header("🏭 戰略工廠 (Strategy Factory)")
@@ -3880,66 +3878,127 @@ def render_meta_trend():
                 
                 # 統計資訊
                 st.caption(f"📊 提示詞統計：{len(battle_prompt_factory)} 字元")
-    
+
     # ==========================================
-    # [TAB 3] 獵殺清單 (完全保留)
+    # [TAB 3] 獵殺清單 - V90.3 動態戰果追蹤升級
     # ==========================================
     with tab3:
-        st.subheader("📝 條件式獵殺清單")
-        
-        st.info("只有當幾何信評達到 **AA-** 或更高等級時，才會觸發『存入獵殺清單』的選項。")
-        
-        high_ratings = [
-            "SSS", "AAA", "Phoenix", "Launchpad", 
-            "AA+", "AA", "AA-"
-        ]
-        
-        if any(hr in rating[0] for hr in high_ratings):
-            st.success(f"""
-            **🎯 目標 `{st.session_state.meta_target}` 符合獵殺標準！**
-            
-            - 評級: **{rating[0]} - {rating[1]}**
-            - 描述: {rating[2]}
-            """)
-            
-            if st.button(f"✅ 存入獵殺清單 (Add to Kill List)", type="primary"):
-                # 初始化獵殺清單
-                if 'kill_list' not in st.session_state:
-                    st.session_state.kill_list = []
+        st.subheader("📝 動態戰果追蹤系統 (Kill List Dashboard)")
+
+        # --- 1. 戰果錄入介面 (The Logbook) ---
+        with st.expander("📝 錄入諸神裁決 (Log Arbiter's Verdict)", expanded=False):
+            with st.form("verdict_form", clear_on_submit=True):
+                log_ticker = st.text_input("股票代號 (Ticker)", value=st.session_state.meta_target)
+                log_verdict = st.selectbox("AI 裁決 (Verdict)", ["Strong Buy", "Buy", "Hold", "Sell", "Strong Sell"])
+                log_target = st.number_input("目標價 (Target Price)", min_value=0.0, format="%.2f")
+                log_stop_loss = st.number_input("停損價 (Stop Loss)", min_value=0.0, format="%.2f")
+                log_rationale = st.text_area("關鍵理由 (Key Rationale)", placeholder="簡述 AI 裁決的核心邏輯...")
                 
-                # 避免重複
-                if st.session_state.meta_target not in st.session_state.kill_list:
-                    st.session_state.kill_list.append(st.session_state.meta_target)
-                    st.toast(f"🎯 {st.session_state.meta_target} 已加入獵殺清單！", icon="✅")
-                else:
-                    st.toast(f"⚠️ {st.session_state.meta_target} 已在清單中", icon="ℹ️")
-        
-        else:
-            st.error(f"""
-            **❌ 目標 `{st.session_state.meta_target}` 未達標準**
-            
-            - 評級: **{rating[0]} - {rating[1]}**
-            - 當前評級不足以列入一級獵殺目標，建議繼續觀察。
-            """)
-        
-        # 顯示已存清單
+                submitted = st.form_submit_button("💾 存入獵殺清單", type="primary")
+                
+                if submitted:
+                    if not log_ticker:
+                        st.warning("請輸入股票代號。")
+                    else:
+                        # 初始化 watchlist
+                        if 'watchlist' not in st.session_state:
+                            st.session_state.watchlist = pd.DataFrame(columns=[
+                                "Date", "Ticker", "Verdict", "Target Price", 
+                                "Stop Loss", "Key Rationale"
+                            ])
+                        
+                        # 創建新紀錄
+                        new_entry = pd.DataFrame([{
+                            "Date": datetime.now().strftime("%Y-%m-%d"),
+                            "Ticker": log_ticker.upper(),
+                            "Verdict": log_verdict,
+                            "Target Price": log_target,
+                            "Stop Loss": log_stop_loss,
+                            "Key Rationale": log_rationale
+                        }])
+                        
+                        # 新增到 watchlist
+                        st.session_state.watchlist = pd.concat(
+                            [st.session_state.watchlist, new_entry], 
+                            ignore_index=True
+                        )
+                        st.success(f"✅ {log_ticker} 的裁決已成功錄入！")
+
         st.markdown("---")
+
+        # --- 2. 獵殺清單儀表板 (The Dashboard) ---
         st.subheader("📋 當前獵殺清單")
-        
-        if 'kill_list' in st.session_state and st.session_state.kill_list:
-            for idx, target in enumerate(st.session_state.kill_list, 1):
-                col1, col2 = st.columns([4, 1])
-                with col1:
-                    st.markdown(f"**{idx}.** {target}")
-                with col2:
-                    if st.button("🗑️", key=f"del_{target}"):
-                        st.session_state.kill_list.remove(target)
-                        st.rerun()
+
+        if 'watchlist' not in st.session_state or st.session_state.watchlist.empty:
+            st.info("清單為空，請使用上方表單錄入 AI 裁決。")
         else:
-            st.info("清單為空，尚無符合條件的標的。")
-    
+            watchlist_df = st.session_state.watchlist.copy()
+            
+            # 準備即時數據
+            display_data = []
+            with st.spinner("正在覆核幾何數據與即時報價..."):
+                for index, row in watchlist_df.iterrows():
+                    ticker_to_check = row["Ticker"]
+                    
+                    # 幾何覆核
+                    geo_check = compute_7d_geometry(ticker_to_check)
+                    angle_3m = geo_check['3M']['angle'] if geo_check else "N/A"
+                    
+                    # 當前價
+                    current_price = "N/A"
+                    if ticker_to_check in st.session_state.get('daily_price_data', {}):
+                        price_df = st.session_state.daily_price_data[ticker_to_check]
+                        if price_df is not None and not price_df.empty:
+                            current_price = price_df['Close'].iloc[-1]
+                    
+                    # 距離目標價
+                    dist_to_target = "N/A"
+                    if isinstance(current_price, (int, float)) and row["Target Price"] > 0:
+                        dist_to_target = ((row["Target Price"] / current_price) - 1) * 100
+                    
+                    new_row = row.to_dict()
+                    new_row["3M Angle"] = angle_3m
+                    new_row["Current Price"] = current_price
+                    new_row["Distance to Target"] = dist_to_target
+                    display_data.append(new_row)
+
+            display_df = pd.DataFrame(display_data)
+            
+            # 顯示表格
+            st.dataframe(display_df[[
+                "Date", "Ticker", "Verdict", "3M Angle", 
+                "Current Price", "Target Price", "Distance to Target"
+            ]].style.format({
+                "3M Angle": "{:.1f}°",
+                "Current Price": "{:.2f}",
+                "Target Price": "{:.2f}",
+                "Distance to Target": "{:+.1f}%"
+            }), use_container_width=True)
+
+            # --- 3. 管理功能 ---
+            st.markdown("---")
+            st.subheader("🔧 管理清單")
+            
+            if not display_df.empty:
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    idx_to_delete = st.selectbox(
+                        "選擇要刪除的項目", 
+                        options=display_df.index,
+                        format_func=lambda x: f"{display_df.loc[x, 'Date']} - {display_df.loc[x, 'Ticker']}"
+                    )
+                with col2:
+                    st.write("") # for alignment
+                    st.write("")
+                    if st.button("🗑️ 刪除選定項目", type="secondary", use_container_width=True):
+                        st.session_state.watchlist = st.session_state.watchlist.drop(index=idx_to_delete).reset_index(drop=True)
+                        st.toast("項目已刪除！", icon="🗑️")
+                        st.rerun()
+            else:
+                st.info("無可刪除項目。")
+
     # ==========================================
-    # [TAB 4] 全境獵殺 - V90.2 瓦爾基里升級
+    # [TAB 4] 全境獵殺 - V90.2 瓦爾基里升級 (完全保留)
     # ==========================================
     with tab4:
         st.subheader("🚀 全境獵殺雷達 (The Hunter)")
