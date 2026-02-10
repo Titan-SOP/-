@@ -2591,11 +2591,13 @@ def render_data():
 
 # --- 🧠 元趨勢戰法 (Meta-Trend) [V82.1 幾何引擎啟動版] ---
 # ==========================================
-# Titan SOP V85.0 - 7維度幾何基因與戰略母港重構
+# Titan SOP V90.1 - 諸神黃昏 & 戰略母港重構
 # ==========================================
-# [CORE COMPONENTS]
-# 1. TitanAgentCouncil - AI 參謀本部 (支援 One-Shot Dialog)
-# 2. render_meta_trend - Tab 6 完整重構 (6 插槽佈局)
+# [CORE COMPONENTS V90.1]:
+# 1. TitanAgentCouncil - AI 參謀本部重構 (五權分立 + 防偷懶協議)
+# 2. render_meta_trend - Tab 2 升級為「戰略工廠」，整合情報與第一性原則
+# 3. File Ingestion - Tab 2 新增多格式情報文件上傳功能
+# 4. First Principles - Tab 2 植入 20 條可選的「統帥第一性原則」
 # ==========================================
 
 import streamlit as st
@@ -2606,9 +2608,10 @@ from datetime import datetime, timedelta
 from scipy.stats import linregress
 import plotly.graph_objects as go
 import google.generativeai as genai
-# [V89.1 新增導入]
 from config import WAR_THEATERS
 import io
+import pdfplumber
+import docx
 
 # ==========================================
 # [SLOT-6.1] 數據引擎 (Data Engine)
@@ -2904,12 +2907,12 @@ def titan_rating_system(geo):
 
 
 # ==========================================
-# [SLOT-6.4] AI 參謀本部 (TitanAgentCouncil with Dialog)
+# [SLOT-6.4] AI 參謀本部 (TitanAgentCouncil V90.1)
 # ==========================================
 
 class TitanAgentCouncil:
     """
-    V90.0 升級版: 五權分立角鬥士系統
+    V90.1 升級版: 五權分立角鬥士系統
     具備: 幾何死神(Quant), 內部人(Insider), 大賣空(Burry), 創世紀(Visionary), 上帝裁決(Arbiter)
     """
     def __init__(self, api_key=None):
@@ -2919,831 +2922,117 @@ class TitanAgentCouncil:
         if api_key:
             try:
                 genai.configure(api_key=api_key)
-                # V90.0: 優先使用最新的 Gemini 2.0 Flash
-                try:
-                    self.model = genai.GenerativeModel('gemini-2.0-flash-exp')
-                except:
-                    # 回退到 1.5 Flash
-                    self.model = genai.GenerativeModel('gemini-1.5-flash')
+                self.model = genai.GenerativeModel('gemini-1.5-flash')
             except Exception as e:
                 st.warning(f"AI 模型初始化失敗: {e}")
 
     def generate_battle_prompt(self, ticker, price, geo_data, rating_info, intel_text="", commander_note=""):
         """
-        [V90.0 核心] 生成史詩級辯論提示詞 (Anti-Laziness Protocol Enforced)
-        
-        Args:
-            ticker: 股票代號
-            price: 當前價格
-            geo_data: 7D 幾何數據
-            rating_info: (level, name, desc, color)
-            intel_text: 法說會/財報情報
-            commander_note: 統帥第一性原則筆記
+        [V90.1 核心] 生成史詩級辯論提示詞 (Anti-Laziness Protocol Enforced)
         """
         level, name, desc, color = rating_info
         
-        # 幾何數據格式化
         geo_str = f"""
-1. 超長期視角 (35 年): 角度 {geo_data['35Y']['angle']}°, R² {geo_data['35Y']['r2']}, 斜率 {geo_data['35Y']['slope']}
-2. 長期視角 (10 年): 角度 {geo_data['10Y']['angle']}°, R² {geo_data['10Y']['r2']}, 斜率 {geo_data['10Y']['slope']}
-3. 中長期視角 (5 年): 角度 {geo_data['5Y']['angle']}°, R² {geo_data['5Y']['r2']}, 斜率 {geo_data['5Y']['slope']}
-4. 中期視角 (3 年): 角度 {geo_data['3Y']['angle']}°, R² {geo_data['3Y']['r2']}, 斜率 {geo_data['3Y']['slope']}
-5. 短中期視角 (1 年): 角度 {geo_data['1Y']['angle']}°, R² {geo_data['1Y']['r2']}, 斜率 {geo_data['1Y']['slope']}
-6. 短期視角 (6 個月): 角度 {geo_data['6M']['angle']}°, R² {geo_data['6M']['r2']}, 斜率 {geo_data['6M']['slope']}
-7. 極短期視角 (3 個月): 角度 {geo_data['3M']['angle']}°, R² {geo_data['3M']['r2']}, 斜率 {geo_data['3M']['slope']}
-
-加速度: {geo_data['acceleration']}° (3M角度 - 1Y角度)
-Phoenix 信號: {'🔥 觸發' if geo_data['phoenix_signal'] else '❄️ 未觸發'}
+- **超長期 (35Y)**: 角度 {geo_data['35Y']['angle']}°, R² {geo_data['35Y']['r2']}
+- **長期 (10Y)**: 角度 {geo_data['10Y']['angle']}°, R² {geo_data['10Y']['r2']}
+- **中期 (3Y)**: 角度 {geo_data['3Y']['angle']}°, R² {geo_data['3Y']['r2']}
+- **短期 (1Y)**: 角度 {geo_data['1Y']['angle']}°, R² {geo_data['1Y']['r2']}
+- **極短期 (3M)**: 角度 {geo_data['3M']['angle']}°, R² {geo_data['3M']['r2']}
+- **加速度 (G-Force)**: {geo_data['acceleration']}° (3M - 1Y)
+- **Phoenix 信號**: {'觸發' if geo_data['phoenix_signal'] else '未觸發'}
 """
         
         prompt = f"""
-# 🏛️ Titan Protocol V90.0: 諸神黃昏戰情室 (The Ragnarök War Room)
+# 🏛️ Titan Protocol V90.1: 諸神黃昏戰情室 (The Ragnarök War Room)
 # 目標代號: {ticker} | 現價: ${price:.2f}
 
-你現在是 Titan 基金的「最高參謀本部」。我們正在決定是否要將此標的納入「2033 百倍股」的核心持倉。
-這不是普通的分析，這是一場 **生死辯論**。
+你現在是 Titan 基金的「最高參謀本部」。我們正在決定是否要將此標的納入「2033 百倍股」的核心持倉。這是一場 **生死辯論**。
 
 ## 📊 戰場地形 (幾何數據)
 {geo_str}
 
 ## 🏆 泰坦信評 (Titan Rating)
-評級等級：{level}
-評級名稱：{name}
-評級描述：{desc}
-(這是基於 22 階信評系統的初步判定，各位角鬥士可以挑戰或支持此評級)
+- **評級**: {level} ({name})
+- **描述**: {desc}
 
 ## 🕵️ 實彈情報 (Insider Intel)
-(以下資料來自法說會/財報/新聞，必須被引用作為攻擊或防禦的武器)
 {intel_text if intel_text else "無外部情報注入，請基於幾何數據與你的知識庫進行推演。"}
 
 ## ✍️ 統帥第一性原則 (Commander's Override)
-(這是最高指令，Arbiter 必須以此為最終裁決的邏輯基石)
 {commander_note if commander_note else "無特殊指令，請依據最大利益原則裁決。"}
 
 ---
 
 ## ⚔️ 五大角鬥士戰鬥程序 (Battle Protocol)
 
-請扮演以下五位角色，進行一場**史詩級的對話 (Epic Debate)**。
+請嚴格扮演以下五位角色，進行一場**史詩級的 Markdown 格式對話**。
 
 **【絕對規則 (Anti-Laziness Protocol)】**
-1. **字數強制**：每一位角色的發言 **不得少於 500 字** (Arbiter 需 800 字以上)。
-2. **禁止客套**：這是一場你死我活的辯論。Burry 必須尖酸刻薄，Visionary 必須狂熱，Insider 必須狡猾。
-3. **第一性原則**：所有論點必須回歸物理極限、現金流本質與技術邊界，禁止使用模糊的金融術語。
-4. **數據引用**：每個論點必須明確引用上方的幾何數據或實彈情報。
+1.  **字數強制**: 每一位角色的發言 **不得少於 400 字** (Arbiter 需 600 字以上)。若字數不足，視為任務失敗。
+2.  **禁止客套**: 這是一場你死我活的辯論。Burry 必須尖酸刻薄，Visionary 必須狂熱，Insider 必須狡猾。
+3.  **第一性原則**: 所有論點必須回歸物理極限、現金流本質與技術邊界，禁止使用模糊的金融術語。
+4.  **數據引用**: 每個論點必須明確引用上方的幾何數據或實彈情報。
+5.  **續寫機制**: 如果你的回答被截斷，請在結尾加上 `[...繼續寫作...]`，以便我輸入 "繼續" 讓你完成。
 
 ### 角色定義：
 
 **1. 【幾何死神】(The Quant - 冷血數學家)**
-* **性格**：冷血、無情、只相信數學。
-* **任務**：根據上方的幾何數據 (35Y, 10Y, 3M 斜率與加速度)，判斷股價是否過熱？R² 是否穩定？
-* **口頭禪**：「數據不會說謊，人類才會。」
-* **論點要求**：至少 500 字，必須引用具體角度與 R² 數值。
+- **性格**: 冷血、無情、只相信數學。
+- **任務**: 根據幾何數據 (角度, R², 加速度)，判斷趨勢的健康度與可持續性。
 
 **2. 【內部操盤手】(The Insider - CEO/CFO 化身)**
-* **性格**：防禦性強、報喜不報憂、擅長畫大餅。
-* **任務**：利用「實彈情報」中的數據，護航公司的成長故事。解釋為何現在是買點？
-* **對抗**：當 Burry 攻擊估值時，你要拿出營收成長率反擊。
-* **論點要求**：至少 500 字，若無實彈情報則從行業趨勢切入。
+- **性格**: 防禦性強、報喜不報憂、擅長畫大餅。
+- **任務**: 利用「實彈情報」，護航公司的成長故事。
 
 **3. 【大賣空獵人】(The Big Short - Michael Burry 化身)**
-* **性格**：極度悲觀、被害妄想、尋找崩盤的前兆。
-* **任務**：攻擊「內部人」的謊言。找出估值泡沫、毛利下滑、宏觀衰退的訊號。
-* **第一性原則**：均值回歸是宇宙鐵律。所有拋物線最終都會墜毀。
-* **論點要求**：至少 500 字，必須質疑信評等級的合理性。
+- **性格**: 極度悲觀、被害妄想、尋找崩盤的前兆。
+- **任務**: 攻擊「內部人」的謊言，找出估值泡沫、宏觀衰退的訊號。
 
 **4. 【創世紀先知】(The Visionary - Cathie Wood/Elon Musk 化身)**
-* **性格**：狂熱、指數級思維、無視短期虧損。
-* **任務**：使用「萊特定律 (Wright's Law)」與「破壞式創新」來碾壓 Burry 的傳統估值。
-* **論點**：別跟我談 PE，看 2033 年的 TAM (潛在市場)。
-* **論點要求**：至少 500 字，必須展望未來 5-10 年的產業變革。
+- **性格**: 狂熱、指數級思維、無視短期虧損。
+- **任務**: 使用「萊特定律」與「破壞式創新」來碾壓 Burry 的傳統估值。
 
 **5. 【地球頂點·全知者】(The Apex Arbiter - 查理·蒙格 + 科技七巨頭創辦人)**
-* **腦袋**：查理·蒙格 (反向思考) + 貝佐斯/馬斯克 (極致商業直覺)。
-* **任務**：你是最終法官。聽完前面四人的血戰後，結合「統帥第一性原則」，給出最終判決。
-* **輸出格式**：
-    * **【戰場總結】**：(200 字評析各方論點的強弱)
-    * **【第一性原則裁決】**：(300 字回歸物理與商業本質的判斷)
-    * **【操作指令】**：
-        - 行動方針：Strong Buy / Buy / Wait / Sell / Strong Sell
-        - 進場價位：基於趨勢線乖離率建議
-        - 停損價位：明確數字
-        - 持倉建議：輕倉/標準倉/重倉/空倉
-* **論點要求**：至少 800 字，必須展現真正的智慧而非模板化結論。
+- **任務**: 最終法官。聽完前面四人的血戰後，結合「統帥第一性原則」，給出最終判決。
+- **輸出格式**:
+    - **【戰場總結】**: (200 字評析)
+    - **【第一性原則裁決】**: (300 字回歸本質的判斷)
+    - **【操作指令】**: (行動方針, 進場/停損價位, 持倉建議)
 
 ---
 
-## 📋 輸出格式要求
+## 📋 輸出格式要求 (Markdown)
 
-請按照以下結構輸出：
-
-```
-## 🤖 幾何死神 (The Quant)
-
-[500+ 字的冷血數學分析]
+```markdown
+### 🤖 **幾何死神 (The Quant)**
+[400+ 字的冷血數學分析]
 
 ---
-
-## 💼 內部操盤手 (The Insider)
-
-[500+ 字的成長故事護航]
+### 💼 **內部操盤手 (The Insider)**
+[400+ 字的成長故事護航]
 
 ---
-
-## 🐻 大賣空獵人 (The Big Short)
-
-[500+ 字的悲觀攻擊]
+### 🐻 **大賣空獵人 (The Big Short)**
+[400+ 字的悲觀攻擊]
 
 ---
-
-## 🚀 創世紀先知 (The Visionary)
-
-[500+ 字的狂熱展望]
+### 🚀 **創世紀先知 (The Visionary)**
+[400+ 字的狂熱展望]
 
 ---
-
-## ⚖️ 地球頂點·全知者 (The Apex Arbiter)
-
-### 【戰場總結】
+### ⚖️ **地球頂點·全知者 (The Apex Arbiter)**
+#### **【戰場總結】**
 [200+ 字]
 
-### 【第一性原則裁決】
+#### **【第一性原則裁決】**
 [300+ 字]
 
-### 【操作指令】
-- **行動方針**: [Strong Buy / Buy / Wait / Sell / Strong Sell]
-- **進場價位**: $XXX (基於趨勢線 ±Y%)
-- **停損價位**: $XXX
-- **停利價位**: $XXX
-- **持倉建議**: [輕倉/標準倉/重倉/空倉]
-- **風險提示**: [3 個關鍵風險]
-
----
-```
-
-請開始你的表演。確保每個角色的論述都具有深度與獨特性，避免重複論點。
-"""
-        return prompt
-    
-    def run_debate(self, ticker, price, geo_data, rating_info, intel_text="", commander_note=""):
-        """
-        執行 AI 辯論並返回結果
-        """
-        if not self.model:
-            return "❌ **AI 功能未啟用**\n\n請在側邊欄輸入 Gemini API Key 以啟用此功能。"
-        
-        try:
-            prompt = self.generate_battle_prompt(
-                ticker, price, geo_data, rating_info, intel_text, commander_note
-            )
-            response = self.model.generate_content(prompt)
-            return response.text
-        
-        except Exception as e:
-            if "429" in str(e):
-                return f"⚠️ **API 配額已耗盡**\n\n{str(e)}\n\n建議稍後再試或切換模型。"
-            else:
-                return f"❌ **AI 辯論失敗**\n\n{str(e)}"
-
-
-# ==========================================
-# [SLOT-6.5] AI 辯論彈跳視窗
-# ==========================================
-
-@st.dialog("🚀 Titan AI 戰情室", width="large")
-def show_ai_debate_dialog(ticker, geo_data, rating_info, api_key):
-    """
-    使用 Streamlit Dialog 顯示 AI 辯論結果
-    """
-    st.markdown(f"### 標的: {ticker}")
-    st.markdown(f"**信評等級**: {rating_info[0]} - {rating_info[1]}")
-    st.divider()
-    
-    with st.spinner("🧠 AI 參謀團正在分析..."):
-        council = TitanAgentCouncil(api_key=api_key)
-        debate_result = council.run_debate(ticker, geo_data, rating_info)
-    
-    st.markdown(debate_result)
-    
-    if st.button("關閉", type="secondary", use_container_width=True):
-        st.rerun()
-
-
-# ==========================================
-# [SLOT-6.6] Tab 6 完整重構 (6 插槽佈局)
-# ==========================================
-@st.fragment
-def render_meta_trend():
-    """
-    元趨勢戰法 - 7維度幾何母港
-    [V90.0 諸神黃昏版]
-    - Tab 1: 保留 V86.2 的全歷史對數回歸圖
-    - Tab 2: 升級為五大角鬥士辯論系統 + 情報注入
-    - Tab 3: 保留獵殺清單功能
-    - Tab 4: 保留 V89.1 的全境獵殺雷達
-    - Tab 5-6: 保留維修中狀態
-    """
-    # 返回首頁按鈕
-    if st.button("🏠 返回首頁", type="secondary"):
-        st.session_state.page = 'home'
-        st.rerun()
-    
-    st.title("🌌 元趨勢戰法 (V90.0 諸神黃昏)")
-    st.caption("全歷史幾何 × 五大角鬥士 × 全境獵殺 | 核心目標：鎖定 2033 年百倍股")
-    st.markdown("---")
-    
-    # ========== 標的輸入 ==========
-    col_input1, col_input2 = st.columns([3, 1])
-    
-    with col_input1:
-        ticker = st.text_input(
-            "🎯 輸入分析標的 (支援上市/上櫃/美股)",
-            value=st.session_state.get('meta_target', '2330'),
-            placeholder="例如: 2330 (上市), 5274 (上櫃), NVDA (美股)"
-        )
-        st.session_state.meta_target = ticker
-    
-    with col_input2:
-        st.write("")  # 對齊用
-        st.write("")
-        scan_button = st.button("📐 啟動掃描", type="primary", use_container_width=True)
-    
-    # ========== 執行掃描 ==========
-    if scan_button and ticker:
-        with st.spinner(f"正在下載 {ticker} 的完整歷史數據（支援上市/上櫃自動切換）..."):
-            geo_results = compute_7d_geometry(ticker)
-            
-            if geo_results is None:
-                st.error(f"❌ 無法獲取 {ticker} 的數據。已嘗試 .TW 和 .TWO，請檢查代號是否正確。")
-                # 清除舊數據避免混淆
-                if 'geometry_results' in st.session_state:
-                    del st.session_state['geometry_results']
-                if 'rating_info' in st.session_state:
-                    del st.session_state['rating_info']
-                return
-            
-            # 計算信評
-            rating_info = titan_rating_system(geo_results)
-            
-            # 儲存到 session_state
-            st.session_state.geometry_results = geo_results
-            st.session_state.rating_info = rating_info
-            
-            st.success(f"✅ 掃描完成！信評等級: **{rating_info[0]} - {rating_info[1]}**")
-    
-    # ========== 6 個插槽 Tab ==========
-    if 'geometry_results' not in st.session_state:
-        st.info("👆 請先輸入標的並啟動掃描。")
-        return
-    
-    geo = st.session_state.geometry_results
-    rating = st.session_state.rating_info
-    ticker = st.session_state.meta_target
-    
-    # 建立 6 個 Tab
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-        "📐 7D 幾何全景",
-        "⚔️ 諸神黃昏",
-        "📝 獵殺清單",
-        "🚀 全境獵殺",
-        "🔧 宏觀對沖",
-        "🔧 回測沙盒"
-    ])
-    
-    # ==========================================
-    # [TAB 1] 7D 幾何全景 - 全歷史對數回歸圖 (完全保留 V86.2)
-    # ==========================================
-    with tab1:
-        st.subheader("📐 七維度幾何儀表板")
-        
-        # ===== 保留區：信評卡片 =====
-        st.markdown(f"""
-        <div style='background-color: {rating[3]}; padding: 20px; border-radius: 10px; text-align: center;'>
-            <h2 style='color: white; margin: 0;'>{rating[0]}</h2>
-            <h3 style='color: white; margin: 5px 0;'>{rating[1]}</h3>
-            <p style='color: white; margin: 0;'>{rating[2]}</p>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        st.markdown("---")
-        
-        # ===== 保留區：7 個維度的角度顯示 =====
-        periods = ['35Y', '10Y', '5Y', '3Y', '1Y', '6M', '3M']
-        
-        # 建立 4x2 網格
-        for i in range(0, len(periods), 4):
-            cols = st.columns(4)
-            for j, col in enumerate(cols):
-                if i + j < len(periods):
-                    period = periods[i + j]
-                    angle = geo[period]['angle']
-                    r2 = geo[period]['r2']
-                    
-                    # 顏色映射
-                    if angle > 30:
-                        color = "#00FF00"
-                    elif angle > 0:
-                        color = "#ADFF2F"
-                    elif angle > -30:
-                        color = "#FFD700"
-                    else:
-                        color = "#FF4500"
-                    
-                    with col:
-                        st.markdown(f"""
-                        <div style='background: linear-gradient(135deg, #2a2a2a 0%, #1a1a1a 100%); 
-                                    padding: 15px; border-radius: 10px; border: 2px solid {color};
-                                    text-align: center; margin-bottom: 10px;'>
-                            <h4 style='color: {color}; margin: 0;'>{period}</h4>
-                            <h1 style='color: white; margin: 5px 0; font-size: 36px;'>{angle}°</h1>
-                            <p style='color: #888; margin: 0; font-size: 12px;'>R² = {r2}</p>
-                        </div>
-                        """, unsafe_allow_html=True)
-        
-        # ===== 保留區：加速度與 Phoenix 信號 =====
-        st.markdown("---")
-        col_acc, col_phx = st.columns(2)
-        
-        with col_acc:
-            acc = geo['acceleration']
-            acc_color = "#00FF00" if acc > 0 else "#FF4500"
-            st.markdown(f"""
-            <div style='background-color: #2a2a2a; padding: 20px; border-radius: 10px; text-align: center;'>
-                <h4 style='color: #FFD700;'>⚡ 加速度</h4>
-                <h2 style='color: {acc_color}; margin: 10px 0;'>{acc}°</h2>
-                <p style='color: #888; font-size: 14px;'>3M - 1Y</p>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        with col_phx:
-            phoenix = geo['phoenix_signal']
-            phx_status = "🔥 是" if phoenix else "❄️ 否"
-            phx_color = "#FF6347" if phoenix else "#4682B4"
-            st.markdown(f"""
-            <div style='background-color: #2a2a2a; padding: 20px; border-radius: 10px; text-align: center;'>
-                <h4 style='color: #FFD700;'>🐦 Phoenix 信號</h4>
-                <h2 style='color: {phx_color}; margin: 10px 0;'>{phx_status}</h2>
-                <p style='color: #888; font-size: 14px;'>浴火重生模式</p>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        # ===== [V86.2 保留] 全歷史對數線性回歸圖 =====
-        st.markdown("---")
-        st.subheader("📈 全歷史對數線性回歸 (上帝軌道)")
-        
-        # 獲取日K數據
-        if ticker in st.session_state.get('daily_price_data', {}):
-            df_daily = st.session_state.daily_price_data[ticker]
-            
-            if df_daily is not None and not df_daily.empty:
-                # 準備數據
-                df_chart = df_daily.copy()
-                df_chart = df_chart.reset_index()
-                df_chart.columns = ['Date', 'Open', 'High', 'Low', 'Close', 'Volume']
-                
-                # 計算全歷史線性回歸 (對數空間)
-                df_chart['Days'] = np.arange(len(df_chart))
-                log_prices = np.log(df_chart['Close'].values)
-                
-                from scipy.stats import linregress
-                slope, intercept, r_value, p_value, std_err = linregress(
-                    df_chart['Days'].values, 
-                    log_prices
-                )
-                
-                # 計算趨勢線 (在原始價格空間)
-                df_chart['Trendline'] = np.exp(intercept + slope * df_chart['Days'])
-                
-                # 計算當前乖離率
-                current_price = df_chart['Close'].iloc[-1]
-                current_trend = df_chart['Trendline'].iloc[-1]
-                deviation = ((current_price / current_trend) - 1) * 100
-                
-                # 顯示統計資訊
-                col_stat1, col_stat2, col_stat3 = st.columns(3)
-                with col_stat1:
-                    st.metric("全歷史 R²", f"{r_value**2:.4f}")
-                with col_stat2:
-                    st.metric("當前價格", f"${current_price:.2f}")
-                with col_stat3:
-                    deviation_color = "normal" if abs(deviation) < 20 else "inverse"
-                    st.metric(
-                        "趨勢線乖離", 
-                        f"{deviation:+.1f}%",
-                        delta_color=deviation_color
-                    )
-                
-                # 使用 Altair 繪製對數座標圖
-                st.info("💡 Y軸為對數座標，可更清楚觀察長期幾何趨勢。藍色虛線為全歷史回歸軌道。")
-                
-                # 價格線
-                price_line = alt.Chart(df_chart).mark_line(
-                    color='#00FF00',
-                    strokeWidth=2
-                ).encode(
-                    x=alt.X('Date:T', title='時間', axis=alt.Axis(format='%Y')),
-                    y=alt.Y('Close:Q', 
-                           title='收盤價 (對數座標)', 
-                           scale=alt.Scale(type='log'),
-                           axis=alt.Axis(tickCount=10)),
-                    tooltip=[
-                        alt.Tooltip('Date:T', title='日期', format='%Y-%m-%d'),
-                        alt.Tooltip('Close:Q', title='收盤價', format=',.2f'),
-                        alt.Tooltip('Trendline:Q', title='趨勢線', format=',.2f')
-                    ]
-                ).properties(
-                    height=500,
-                    title=f'{ticker} - 全歷史對數線性回歸分析 (1990-Now)'
-                )
-                
-                # 趨勢線 (上帝軌道)
-                trend_line = alt.Chart(df_chart).mark_line(
-                    color='#4169E1',
-                    strokeWidth=2,
-                    strokeDash=[5, 5]
-                ).encode(
-                    x='Date:T',
-                    y=alt.Y('Trendline:Q', scale=alt.Scale(type='log'))
-                )
-                
-                # 合併圖表
-                final_chart = (price_line + trend_line).configure_axis(
-                    gridColor='#333333',
-                    domainColor='#666666'
-                ).configure_view(
-                    strokeWidth=0
-                )
-                
-                st.altair_chart(final_chart, use_container_width=True)
-                
-                # 解讀建議
-                st.markdown("---")
-                st.subheader("📊 幾何解讀")
-                
-                if abs(deviation) < 10:
-                    st.success(f"✅ 價格貼近趨勢線 (乖離 {deviation:+.1f}%)，處於健康軌道。")
-                elif deviation > 30:
-                    st.warning(f"⚠️ 價格遠高於趨勢線 (乖離 +{deviation:.1f}%)，可能過熱，注意回調風險。")
-                elif deviation < -30:
-                    st.info(f"💎 價格遠低於趨勢線 (乖離 {deviation:.1f}%)，若基本面無虞，可能是逢低機會。")
-                else:
-                    st.info(f"ℹ️ 價格略偏離趨勢線 (乖離 {deviation:+.1f}%)，屬正常波動範圍。")
-            
-            else:
-                st.warning("⚠️ 無法繪製圖表：日K數據為空。")
-        else:
-            st.warning("⚠️ 請先執行掃描以載入數據。")
-    
-    # ==========================================
-    # [TAB 2] 諸神黃昏 - 五大角鬥士辯論系統 (V90.0 核心升級)
-    # ==========================================
-    with tab2:
-        st.header("⚔️ 諸神黃昏戰情室 (Ragnarök War Room)")
-        st.caption("五權分立角鬥士系統 - 為 2033 百倍股進行生死辯論")
-        
-        # [V90.0 新增] 角色預覽卡片
-        with st.expander("👥 認識五大角鬥士", expanded=False):
-            cols = st.columns(5)
-            
-            characters = [
-                ("🤖", "幾何死神", "冷血數學家", "只相信數據"),
-                ("💼", "內部操盤手", "CEO/CFO", "護航成長故事"),
-                ("🐻", "大賣空獵人", "Michael Burry", "尋找崩盤前兆"),
-                ("🚀", "創世紀先知", "Cathie Wood", "指數級思維"),
-                ("⚖️", "全知裁決者", "查理·蒙格", "最終判決")
-            ]
-            
-            for col, (emoji, name, role, desc) in zip(cols, characters):
-                with col:
-                    st.markdown(f"""
-                    <div style='text-align: center; padding: 15px; background: #2a2a2a; border-radius: 10px;'>
-                        <div style='font-size: 48px; margin-bottom: 10px;'>{emoji}</div>
-                        <h4 style='color: white; margin: 5px 0;'>{name}</h4>
-                        <p style='color: #FFD700; font-size: 14px; margin: 5px 0;'>{role}</p>
-                        <p style='color: #888; font-size: 12px;'>{desc}</p>
-                    </div>
-                    """, unsafe_allow_html=True)
-        
-        st.markdown("---")
-        
-        # [V90.0 核心] 左右分欄佈局
-        col_params, col_output = st.columns([1, 2])
-        
-        with col_params:
-            st.subheader("🎛️ 戰略參數")
-            
-            # [V90.0 新增] 智能快捷鏈接
-            with st.expander("🔗 智能快捷鏈接", expanded=True):
-                if ticker:
-                    ticker_clean = ticker.replace('.TW', '').replace('.TWO', '')
-                    
-                    if ticker.endswith('.TW') or ticker.endswith('.TWO'):
-                        st.markdown(f"""
-                        **台股資源**:
-                        - [📊 Goodinfo](https://goodinfo.tw/tw/StockDetail.asp?STOCK_ID={ticker_clean})
-                        - [📈 Yahoo 台股](https://tw.stock.yahoo.com/quote/{ticker_clean})
-                        - [🎙️ AlphaMemo](https://www.alphamemo.ai/free-transcripts)
-                        - [💰 MoneyDJ](https://www.moneydj.com/kmdj/wiki/wikiviewer.aspx?keyid={ticker_clean})
-                        """)
-                    else:
-                        st.markdown(f"""
-                        **美股資源**:
-                        - [📊 Yahoo Finance](https://finance.yahoo.com/quote/{ticker})
-                        - [📈 Seeking Alpha](https://seekingalpha.com/symbol/{ticker})
-                        - [📰 MarketWatch](https://www.marketwatch.com/investing/stock/{ticker})
-                        - [💼 SEC Filings](https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={ticker})
-                        """)
-            
-            st.divider()
-            
-            # [V90.0 新增] 情報注入插槽
-            with st.expander("🕵️ 情報注入插槽 (Insider Intel)", expanded=True):
-                st.caption("貼上法說會摘要、財報數據或新聞 (供 CEO 與 Burry 使用)")
-                intel_text = st.text_area(
-                    "法說會/財報內容",
-                    height=150,
-                    placeholder="例如：CEO 表示 AI 伺服器營收將於 Q3 翻倍，但毛利率因散熱成本上升而微幅下降至 18%..."
-                )
-            
-            st.divider()
-            
-            # [V90.0 新增] 統帥第一性原則
-            with st.expander("✍️ 統帥第一性原則 (Commander's Override)", expanded=False):
-                st.caption("強制 Arbiter 遵守的最高邏輯")
-                commander_note = st.text_area(
-                    "統帥筆記",
-                    height=150,
-                    placeholder="例如：萊特定律檢視：假設產量翻倍，成本是否下降 15%？若無，則無護城河。若有，則可持有 10 年。"
-                )
-        
-        with col_output:
-            st.subheader("🌌 戰情室輸出")
-            
-            # 獲取當前價格
-            current_price = 0.0
-            if ticker in st.session_state.get('daily_price_data', {}):
-                df_daily = st.session_state.daily_price_data[ticker]
-                if df_daily is not None and not df_daily.empty:
-                    current_price = df_daily['Close'].iloc[-1]
-            
-            # [V90.0 核心] 雙模式按鈕
-            st.markdown("**選擇辯論模式**:")
-            col_btn1, col_btn2 = st.columns(2)
-            
-            with col_btn1:
-                # 模式 1: 生成提示詞 (不需要 API Key)
-                if st.button("📋 生成戰略提示詞", type="secondary", use_container_width=True):
-                    council = TitanAgentCouncil()  # 不傳 API Key
-                    battle_prompt = council.generate_battle_prompt(
-                        ticker, current_price, geo, rating, intel_text, commander_note
-                    )
-                    
-                    st.success("✅ 史詩級戰略提示詞已生成！")
-                    st.text_area(
-                        "📋 複製此提示詞 (Ctrl+A, Ctrl+C)",
-                        value=battle_prompt,
-                        height=400
-                    )
-                    
-                    st.download_button(
-                        "💾 下載戰略提示詞 (.txt)",
-                        battle_prompt,
-                        file_name=f"TITAN_RAGNAROK_{ticker}_{datetime.now().strftime('%Y%m%d_%H%M')}.txt",
-                        mime="text/plain"
-                    )
-                    
-                    st.info("""
-                    **📌 使用方法**：
-                    1. 複製上方提示詞
-                    2. 貼到 [Gemini](https://gemini.google.com) 或 [Claude](https://claude.ai)
-                    3. 獲得五大角鬥士的完整辯論結果
-                    """)
-                    
-                    st.caption(f"📊 提示詞統計：{len(battle_prompt)} 字元")
-            
-            with col_btn2:
-                # 模式 2: 直接呼叫 API (需要 API Key)
-                api_key = st.session_state.get('api_key', '')
-                
-                if api_key:
-                    if st.button("🔥 啟動五大角鬥士 (API)", type="primary", use_container_width=True):
-                        with st.spinner("🌌 五大角鬥士正在血戰中..."):
-                            council = TitanAgentCouncil(api_key=api_key)
-                            debate_result = council.run_debate(
-                                ticker, current_price, geo, rating, intel_text, commander_note
-                            )
-                        
-                        st.success("✅ 諸神黃昏辯論完成！")
-                        st.markdown(debate_result)
-                        
-                        # 儲存到辯論歷史
-                        if 'debate_history' not in st.session_state:
-                            st.session_state.debate_history = []
-                        st.session_state.debate_history.append({
-                            'timestamp': datetime.now(),
-                            'ticker': ticker,
-                            'price': current_price,
-                            'rating': rating[0],
-                            'debate': debate_result
-                        })
-                        
-                        st.download_button(
-                            "💾 下載完整辯論紀錄 (.md)",
-                            debate_result,
-                            file_name=f"TITAN_DEBATE_{ticker}_{datetime.now().strftime('%Y%m%d_%H%M')}.md",
-                            mime="text/markdown"
-                        )
-                else:
-                    st.button("🔥 啟動五大角鬥士 (需 API Key)", disabled=True, use_container_width=True)
-                    st.caption("⚠️ 請在側邊欄輸入 Gemini API Key")
-        
-        # [V90.0 新增] 辯論歷史記錄
-        if 'debate_history' in st.session_state and st.session_state.debate_history:
-            st.markdown("---")
-            with st.expander("📚 歷史辯論記錄 (最近 5 筆)", expanded=False):
-                for i, record in enumerate(reversed(st.session_state.debate_history[-5:]), 1):
-                    st.markdown(f"""
-                    **{i}. {record['ticker']}** @ ${record['price']:.2f} | {record['rating']} | {record['timestamp'].strftime('%Y-%m-%d %H:%M')}
-                    """)
-                    if st.button(f"查看 #{i}", key=f"view_debate_{i}"):
-                        st.markdown(record['debate'])
-    
-    # ==========================================
-    # [TAB 3] 獵殺清單 (完全保留)
-    # ==========================================
-    with tab3:
-        st.subheader("📝 條件式獵殺清單")
-        
-        st.info("只有當幾何信評達到 **AA-** 或更高等級時，才會觸發『存入獵殺清單』的選項。")
-        
-        high_ratings = [
-            "SSS", "AAA", "Phoenix", "Launchpad", 
-            "AA+", "AA", "AA-"
-        ]
-        
-        if any(hr in rating[0] for hr in high_ratings):
-            st.success(f"""
-            **🎯 目標 `{st.session_state.meta_target}` 符合獵殺標準！**
-            
-            - 評級: **{rating[0]} - {rating[1]}**
-            - 描述: {rating[2]}
-            """)
-            
-            if st.button(f"✅ 存入獵殺清單 (Add to Kill List)", type="primary"):
-                # 初始化獵殺清單
-                if 'kill_list' not in st.session_state:
-                    st.session_state.kill_list = []
-                
-                # 避免重複
-                if st.session_state.meta_target not in st.session_state.kill_list:
-                    st.session_state.kill_list.append(st.session_state.meta_target)
-                    st.toast(f"🎯 {st.session_state.meta_target} 已加入獵殺清單！", icon="✅")
-                else:
-                    st.toast(f"⚠️ {st.session_state.meta_target} 已在清單中", icon="ℹ️")
-        
-        else:
-            st.error(f"""
-            **❌ 目標 `{st.session_state.meta_target}` 未達標準**
-            
-            - 評級: **{rating[0]} - {rating[1]}**
-            - 當前評級不足以列入一級獵殺目標，建議繼續觀察。
-            """)
-        
-        # 顯示已存清單
-        st.markdown("---")
-        st.subheader("📋 當前獵殺清單")
-        
-        if 'kill_list' in st.session_state and st.session_state.kill_list:
-            for idx, target in enumerate(st.session_state.kill_list, 1):
-                col1, col2 = st.columns([4, 1])
-                with col1:
-                    st.markdown(f"**{idx}.** {target}")
-                with col2:
-                    if st.button("🗑️", key=f"del_{target}"):
-                        st.session_state.kill_list.remove(target)
-                        st.rerun()
-        else:
-            st.info("清單為空，尚無符合條件的標的。")
-    
-    # ==========================================
-    # [TAB 4] 全境獵殺 (完全保留 V89.1)
-    # ==========================================
-    with tab4:
-        st.subheader("🚀 全境獵殺雷達 (The Hunter)")
-        st.markdown("---")
-
-        with st.expander("🎯 獵殺控制台 (Mission Control)", expanded=True):
-            # 1. 戰區選擇
-            theater_options = list(WAR_THEATERS.keys())
-            selected_theater = st.selectbox(
-                "選擇掃描戰區 (Select War Theater)",
-                options=theater_options
-            )
-            
-            if selected_theater:
-                stock_count = len(WAR_THEATERS[selected_theater])
-                st.info(f"已選擇戰區 **{selected_theater}**，包含 **{stock_count}** 檔潛力標的。")
-
-            # 2. 啟動按鈕
-            if st.button("🚀 啟動全境掃描", type="primary", use_container_width=True):
-                if not selected_theater:
-                    st.warning("請先選擇一個戰區。")
-                else:
-                    tickers_to_scan = WAR_THEATERS[selected_theater]
-                    total_tickers = len(tickers_to_scan)
-                    hunt_results = []
-                    
-                    progress_bar = st.progress(0, text=f"掃描進度: 0/{total_tickers}")
-                    
-                    for i, t in enumerate(tickers_to_scan):
-                        geo_data = compute_7d_geometry(t)
-                        progress_bar.progress((i + 1) / total_tickers, text=f"掃描進度: {t} ({i+1}/{total_tickers})")
-                        
-                        if geo_data:
-                            # 獲取現價
-                            current_price = 0.0
-                            if t in st.session_state.get('daily_price_data', {}) and not st.session_state.daily_price_data[t].empty:
-                                current_price = st.session_state.daily_price_data[t]['Close'].iloc[-1]
-
-                            # 濾網條件判斷
-                            match_type = None
-                            # 模式 A: Phoenix
-                            if geo_data['10Y']['angle'] < 10 and geo_data['3M']['angle'] > 45:
-                                match_type = "🔥 Phoenix"
-                            # 模式 B: Awakening
-                            elif abs(geo_data['35Y']['angle']) < 15 and geo_data['acceleration'] > 20:
-                                match_type = "🦁 Awakening"
-                            # 模式 C: Rocket
-                            elif geo_data['3M']['angle'] > 60:
-                                match_type = "🚀 Rocket"
-                            
-                            if match_type:
-                                hunt_results.append({
-                                    "代號": t,
-                                    "現價": current_price,
-                                    "35Y角度": geo_data['35Y']['angle'],
-                                    "10Y角度": geo_data['10Y']['angle'],
-                                    "3M角度": geo_data['3M']['angle'],
-                                    "G力": geo_data['acceleration'],
-                                    "型態": match_type
-                                })
-                    
-                    progress_bar.empty()
-                    st.session_state[f'hunt_results_{selected_theater}'] = pd.DataFrame(hunt_results)
-                    st.success(f"✅ {selected_theater} 戰區掃描完成，發現 {len(hunt_results)} 個潛在目標！")
-
-        # 顯示掃描結果
-        if f'hunt_results_{selected_theater}' in st.session_state:
-            results_df = st.session_state[f'hunt_results_{selected_theater}']
-            
-            if not results_df.empty:
-                st.markdown("---")
-                st.markdown("### ⚔️ 戰果清單 (Scan Results)")
-                
-                # 格式化顯示
-                st.dataframe(results_df.style.format({
-                    "現價": "{:.2f}",
-                    "35Y角度": "{:.1f}°",
-                    "10Y角度": "{:.1f}°",
-                    "3M角度": "{:.1f}°",
-                    "G力": "{:+.1f}°"
-                }), use_container_width=True)
-
-                # CSV 下載
-                csv = results_df.to_csv(index=False).encode('utf-8')
-                st.download_button(
-                    label="📥 下載戰果 (CSV)",
-                    data=csv,
-                    file_name=f'hunter_results_{selected_theater}_{datetime.now().strftime("%Y%m%d")}.csv',
-                    mime='text/csv',
-                )
-            else:
-                st.info("未發現符合條件的目標，請嘗試其他戰區。")
-    
-    # ==========================================
-    # [TAB 5-6] 維修中插槽 (完全保留)
-    # ==========================================
-    with tab5:
-        st.subheader("🔧 宏觀對沖 (Macro Hedge)")
-        st.warning("""
-        **功能預覽**：
-        - 多資產相關性矩陣
-        - Beta 對沖策略建議
-        - 全球市場聯動分析
-        
-        🚧 此功能正在開發中，敬請期待...
-        """)
-    
-    with tab6:
-        st.subheader("🔧 回測沙盒 (Backtest Sandbox)")
-        st.warning("""
-        **功能預覽**：
-        - 基於 7D 幾何信號的自動化回測
-        - 動態倉位管理模擬
-        - 夏普比率與最大回撤計算
-        
-        🚧 此功能正在開發中，敬請期待...
-        """)
+#### **【操作指令】**
+- **行動方針**: 
+- **進場價位**: 
+- **停損價位**: 
+- **持倉建議**: 
+- **風險提示**:
 
 # --- 🏠 戰情指揮首頁 (Home) [V81.1 NEW] ---
 @st.fragment
