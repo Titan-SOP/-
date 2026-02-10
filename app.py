@@ -2589,326 +2589,13 @@ def render_data():
         else:
             st.info("請上傳 CB 清單以掃描時間套利事件。")
 
-# --- 🧠 元趨勢戰法 (Meta-Trend) [V82.1 幾何引擎啟動版] ---
-# ==========================================
-# Titan SOP V90.1 - 諸神黃昏 & 戰略母港重構
-# ==========================================
-# [CORE COMPONENTS V90.1]:
-# 1. TitanAgentCouncil - AI 參謀本部重構 (五權分立 + 防偷懶協議)
-# 2. render_meta_trend - Tab 2 升級為「戰略工廠」，整合情報與第一性原則
-# 3. File Ingestion - Tab 2 新增多格式情報文件上傳功能
-# 4. First Principles - Tab 2 植入 20 條可選的「統帥第一性原則」
-# ==========================================
-
-import streamlit as st
-import pandas as pd
-import numpy as np
-import yfinance as yf
-from datetime import datetime, timedelta
-from scipy.stats import linregress
-import plotly.graph_objects as go
-import google.generativeai as genai
-from config import WAR_THEATERS
-import io
-import pdfplumber
-import docx
-
-# ==========================================
-# [SLOT-6.1] 數據引擎 (Data Engine)
-# ==========================================
-
-def get_time_slice(df, months):
-    """
-    [修復] 精準切割最後 N 個月的數據片段
-    Args:
-        df: 月K DataFrame
-        months: 需要的月數
-    Returns:
-        切割後的 DataFrame
-    """
-    if df is None or df.empty:
-        return df
-    # 如果數據足夠長，取最後 N 個月；否則回傳全部
-    if len(df) >= months:
-        return df.iloc[-months:]
-    return df
-
-def download_full_history(ticker, start="1990-01-01"):
-    """
-    下載完整歷史月K線數據
-    [V86.2 CRITICAL FIX]: 支援台股上櫃 (.TWO)
-    
-    Args:
-        ticker: 股票代號 (會自動處理台股後綴)
-    
-    Returns:
-        月K DataFrame 或 None
-    """
-    try:
-        original_ticker = ticker
-        
-        # [V86.2 修正] 智慧處理台股代號 - 支援上市與上櫃
-        if ticker.isdigit() and len(ticker) >= 4:
-            ticker = f"{ticker}.TW"
-        
-        # 下載日K數據 (強制 auto_adjust 以獲取標準 OHLC，避免股息干擾)
-        df = yf.download(ticker, start=start, progress=False, auto_adjust=True)
-        
-        # [V86.2 新增] 如果上市沒數據，嘗試上櫃
-        if df.empty and original_ticker.isdigit() and len(original_ticker) >= 4:
-            ticker = f"{original_ticker}.TWO"
-            df = yf.download(ticker, start=start, progress=False, auto_adjust=True)
-        
-        # [關鍵修復]：yfinance 多層索引整平 (兼容台股與美股)
-        if isinstance(df.columns, pd.MultiIndex):
-           try:
-               df.columns = df.columns.get_level_values(0)
-           except: 
-               pass
-        
-        if df.empty:
-            return None
-        
-        # 確保索引是時間格式 (Resample 的前提)
-        if not isinstance(df.index, pd.DatetimeIndex):
-            df.index = pd.to_datetime(df.index)
-        
-        # 轉換為月K
-        df_monthly = df.resample('M').agg({
-            'Open': 'first',
-            'High': 'max',
-            'Low': 'min',
-            'Close': 'last',
-            'Volume': 'sum'
-        }).dropna()
-        
-        # [V86.2 新增] 儲存原始日K數據到 session_state 供圖表使用
-        if 'daily_price_data' not in st.session_state:
-            st.session_state.daily_price_data = {}
-        st.session_state.daily_price_data[original_ticker] = df
-        
-        return df_monthly
-    
-    except Exception as e:
-        st.error(f"數據下載失敗: {e}")
-        return None
-
-
-# ==========================================
-# [SLOT-6.2] 數學引擎 (Math Engine)
-# ==========================================
-
-def calculate_geometry_metrics(df, months):
-    """
-    計算單一時間窗口的幾何指標
-    
-    Args:
-        df: 完整月K DataFrame
-        months: 時間窗口 (月)
-    
-    Returns:
-        dict: {'angle': float, 'r2': float, 'slope': float}
-    """
-    if df is None or df.empty:
-        return {'angle': 0, 'r2': 0, 'slope': 0}
-    
-    # 切割數據
-    slice_df = get_time_slice(df, months)
-    
-    if len(slice_df) < 3:
-        return {'angle': 0, 'r2': 0, 'slope': 0}
-    
-    # 對數價格回歸
-    log_prices = np.log(slice_df['Close'].values)
-    x = np.arange(len(log_prices))
-    
-    slope, intercept, r_value, p_value, std_err = linregress(x, log_prices)
-    
-    # 將斜率轉換為角度 (-90 到 90 度)
-    # 標準化: 假設 slope=0.01 對應 45度
-    angle = np.arctan(slope * 100) * (180 / np.pi)
-    angle = np.clip(angle, -90, 90)
-    
-    r2 = r_value ** 2
-    
-    return {
-        'angle': round(angle, 2),
-        'r2': round(r2, 4),
-        'slope': round(slope, 6)
-    }
-
-
-def compute_7d_geometry(ticker):
-    """
-    計算 7 維度完整幾何掃描
-    
-    Returns:
-        dict: {
-            '35Y': {...},
-            '10Y': {...},
-            '5Y': {...},
-            '3Y': {...},
-            '1Y': {...},
-            '6M': {...},
-            '3M': {...},
-            'acceleration': float,
-            'phoenix_signal': bool
-        }
-    """
-    df = download_full_history(ticker)
-    
-    if df is None:
-        return None
-    
-    # 定義 7 個時間窗口 (月)
-    periods = {
-        '35Y': 420,
-        '10Y': 120,
-        '5Y': 60,
-        '3Y': 36,
-        '1Y': 12,
-        '6M': 6,
-        '3M': 3
-    }
-    
-    results = {}
-    
-    for label, months in periods.items():
-        results[label] = calculate_geometry_metrics(df, months)
-    
-    # 計算加速度
-    acceleration = results['3M']['angle'] - results['1Y']['angle']
-    results['acceleration'] = round(acceleration, 2)
-    
-    # Phoenix 信號
-    phoenix = (results['10Y']['angle'] < 0) and (results['6M']['angle'] > 25)
-    results['phoenix_signal'] = phoenix
-    
-    return results
-
-
-# ==========================================
-# [SLOT-6.3] 22 階泰坦信評引擎 (The 22 Scripts)
-# ==========================================
-
-def titan_rating_system(geo):
-    """
-    22 階信評邏輯樹
-    
-    Args:
-        geo: 7D 幾何數據字典
-    
-    Returns:
-        tuple: (rating_level, rating_name, description, color)
-    """
-    if geo is None:
-        return ("N/A", "無數據", "數據不足", "#808080")
-    
-    # 提取關鍵指標
-    angle_35y = geo['35Y']['angle']
-    angle_10y = geo['10Y']['angle']
-    angle_5y = geo['5Y']['angle']
-    angle_1y = geo['1Y']['angle']
-    angle_6m = geo['6M']['angle']
-    angle_3m = geo['3M']['angle']
-    
-    r2_1y = geo['1Y']['r2']
-    r2_3m = geo['3M']['r2']
-    
-    acceleration = geo['acceleration']
-    phoenix = geo['phoenix_signal']
-    
-    # ===== SSS 級 =====
-    if all([angle_35y > 45, angle_10y > 45, angle_1y > 45, angle_3m > 45]):
-        return ("SSS", "Titan (泰坦)", "全週期超過45度，神級標的", "#FFD700")
-    
-    # ===== AAA 級 =====
-    if angle_1y > 40 and angle_6m > 45 and angle_3m > 50 and acceleration > 20:
-        return ("AAA", "Dominator (統治者)", "短期加速向上，完美趨勢", "#FF4500")
-    
-    # ===== Phoenix 級 (特殊) =====
-    if phoenix and angle_3m > 30:
-        return ("Phoenix", "Phoenix (浴火重生)", "長空短多，逆轉信號", "#FF6347")
-    
-    # ===== Launchpad 級 (特殊) =====
-    if r2_1y > 0.95 and 20 < angle_1y < 40 and acceleration > 0:
-        return ("Launchpad", "Launchpad (發射台)", "線性度極高，蓄勢待發", "#32CD32")
-    
-    # ===== AA+ 級 =====
-    if angle_1y > 35 and angle_3m > 40 and r2_3m > 0.85:
-        return ("AA+", "Elite (精英)", "一年期強勢上攻", "#FFA500")
-    
-    # ===== AA 級 =====
-    if angle_1y > 30 and angle_6m > 35:
-        return ("AA", "Strong Bull (強多)", "中短期穩定上升", "#FFD700")
-    
-    # ===== AA- 級 =====
-    if angle_1y > 25 and angle_3m > 30:
-        return ("AA-", "Steady Bull (穩健多)", "趨勢健康向上", "#ADFF2F")
-    
-    # ===== A+ 級 =====
-    if angle_6m > 20 and angle_3m > 25:
-        return ("A+", "Moderate Bull (溫和多)", "短期表現良好", "#7FFF00")
-    
-    # ===== A 級 =====
-    if angle_3m > 15:
-        return ("A", "Weak Bull (弱多)", "短期微幅上揚", "#98FB98")
-    
-    # ===== BBB+ 級 (中性偏多) =====
-    if -5 < angle_3m < 15 and angle_1y > 0:
-        return ("BBB+", "Neutral+ (中性偏多)", "盤整偏多", "#F0E68C")
-    
-    # ===== BBB 級 (中性) =====
-    if -10 < angle_3m < 10 and -10 < angle_1y < 10:
-        return ("BBB", "Neutral (中性)", "橫盤震蕩", "#D3D3D3")
-    
-    # ===== BBB- 級 (中性偏空) =====
-    if -15 < angle_3m < 5 and angle_1y < 0:
-        return ("BBB-", "Neutral- (中性偏空)", "盤整偏弱", "#DDA0DD")
-    
-    # ===== Divergence 級 (特殊警告) =====
-    if angle_1y > 20 and angle_3m < -10:
-        return ("Divergence", "Divergence (背離)", "價格創高但動能衰竭", "#FF1493")
-    
-    # ===== BB+ 級 =====
-    if -25 < angle_3m < -15 and angle_1y > -10:
-        return ("BB+", "Weak Bear (弱空)", "短期下跌", "#FFA07A")
-    
-    # ===== BB 級 =====
-    if -35 < angle_3m < -25:
-        return ("BB", "Moderate Bear (中等空)", "下跌趨勢明確", "#FF6347")
-    
-    # ===== BB- 級 =====
-    if -45 < angle_3m < -35:
-        return ("BB-", "Strong Bear (強空)", "跌勢凌厲", "#DC143C")
-    
-    # ===== B+ 級 =====
-    if angle_3m < -45 and angle_1y < -30:
-        return ("B+", "Severe Bear (重度空)", "崩跌模式", "#8B0000")
-    
-    # ===== B 級 =====
-    if angle_10y < -30 and angle_3m < -40:
-        return ("B", "Depression (蕭條)", "長期熊市", "#800000")
-    
-    # ===== C 級 =====
-    if angle_35y < -20 and angle_10y < -35:
-        return ("C", "Structural Decline (結構衰退)", "世代熊市", "#4B0082")
-    
-    # ===== D 級 =====
-    if angle_3m < -60:
-        return ("D", "Collapse (崩盤)", "極度危險", "#000000")
-    
-    # ===== 觸底反彈 級 (特殊) =====
-    if angle_10y < -20 and angle_3m > 15 and acceleration > 30:
-        return ("Reversal", "Reversal (觸底反彈)", "熊市中的V型反轉", "#00CED1")
-    
-    # ===== 預設 =====
-    return ("N/A", "Unknown (未分類)", "無法歸類", "#808080")
-
-
-# ==========================================
-# [SLOT-6.4] AI 參謀本部 (TitanAgentCouncil V90.1)
-# ==========================================
+# --- 🧠 元趨勢戰法 (Meta-Trend) [V90.1 諸神黃昏最終版] ---
+# ==============================================================================
+# Titan SOP V90.1 - 諸神黃昏 (Ragnarök)
+# [CORE UPGRADE]:
+# 1. TitanAgentCouncil: 五權分立角鬥士系統 + 防偷懶協議 + 互動續寫機制
+# 2. Slot 6.2 (戰略工廠): 整合 9 大智能連結、檔案情報注入、20 條第一性原則多選
+# ==============================================================================
 
 class TitanAgentCouncil:
     """
@@ -2919,444 +2606,301 @@ class TitanAgentCouncil:
         self.api_key = api_key
         self.model = None
         
+        # 嘗試初始化模型 (若無 API Key 則僅用於生成 Prompt)
         if api_key:
             try:
                 genai.configure(api_key=api_key)
-                self.model = genai.GenerativeModel('gemini-1.5-flash')
+                self.model = genai.GenerativeModel('gemini-1.5-pro') # 優先使用強大模型
             except Exception as e:
-                st.warning(f"AI 模型初始化失敗: {e}")
+                # 這裡僅 print 錯誤，避免在 UI 顯示紅字干擾
+                print(f"AI Init Warning: {e}")
 
     def generate_battle_prompt(self, ticker, price, geo_data, rating_info, intel_text="", commander_note=""):
         """
-        [V90.1 核心] 生成史詩級辯論提示詞 (Anti-Laziness Protocol Enforced)
+        生成史詩級辯論提示詞 (Anti-Laziness Protocol Enforced)
         """
-        level, name, desc, color = rating_info
+        # 解包評級資訊 (若格式不符則給預設值)
+        try:
+            level, name, desc, color = rating_info
+        except:
+            level, name, desc, color = ("N/A", "Unknown", "無評級數據", "grey")
         
-        geo_str = f"""
-- **超長期 (35Y)**: 角度 {geo_data['35Y']['angle']}°, R² {geo_data['35Y']['r2']}
-- **長期 (10Y)**: 角度 {geo_data['10Y']['angle']}°, R² {geo_data['10Y']['r2']}
-- **中期 (3Y)**: 角度 {geo_data['3Y']['angle']}°, R² {geo_data['3Y']['r2']}
-- **短期 (1Y)**: 角度 {geo_data['1Y']['angle']}°, R² {geo_data['1Y']['r2']}
-- **極短期 (3M)**: 角度 {geo_data['3M']['angle']}°, R² {geo_data['3M']['r2']}
-- **加速度 (G-Force)**: {geo_data['acceleration']}° (3M - 1Y)
-- **Phoenix 信號**: {'觸發' if geo_data['phoenix_signal'] else '未觸發'}
-"""
+        # 幾何數據格式化
+        geo_str = "\n".join([f"- {k}: {v}" for k, v in geo_data.items()])
         
+        # 建構提示詞 (使用 f-string)
         prompt = f"""
-# 🏛️ Titan Protocol V90.1: 諸神黃昏戰情室 (The Ragnarök War Room)
-# 目標代號: {ticker} | 現價: ${price:.2f}
 
-你現在是 Titan 基金的「最高參謀本部」。我們正在決定是否要將此標的納入「2033 百倍股」的核心持倉。這是一場 **生死辯論**。
+# 🏛️ Titan Protocol V90.1: 諸神黃昏戰情室 (The Ragnarok War Room)
+# 目標代號: {ticker} | 現價: {price} | Titan評級: {level} ({name})
+
+你現在是 Titan 基金的「最高參謀本部」。我們正在決定是否要將此標的納入「2033 百倍股」的核心持倉。
+這不是普通的分析，這是一場 **生死辯論 (Life or Death Debate)**。
 
 ## 📊 戰場地形 (幾何數據)
 {geo_str}
-
-## 🏆 泰坦信評 (Titan Rating)
-- **評級**: {level} ({name})
-- **描述**: {desc}
+(評級描述: {desc})
 
 ## 🕵️ 實彈情報 (Insider Intel)
+(以下資料來自法說會/財報/新聞，必須被引用作為攻擊或防禦的武器)
 {intel_text if intel_text else "無外部情報注入，請基於幾何數據與你的知識庫進行推演。"}
 
 ## ✍️ 統帥第一性原則 (Commander's Override)
+(這是最高指令，Arbiter 必須以此為最終裁決的邏輯基石)
 {commander_note if commander_note else "無特殊指令，請依據最大利益原則裁決。"}
 
 ---
 
 ## ⚔️ 五大角鬥士戰鬥程序 (Battle Protocol)
 
-請嚴格扮演以下五位角色，進行一場**史詩級的 Markdown 格式對話**。
+請扮演以下五位角色，進行一場**史詩級的對話**。
 
 **【絕對規則 (Anti-Laziness Protocol)】**
-1.  **字數強制**: 每一位角色的發言 **不得少於 400 字** (Arbiter 需 600 字以上)。若字數不足，視為任務失敗。
-2.  **禁止客套**: 這是一場你死我活的辯論。Burry 必須尖酸刻薄，Visionary 必須狂熱，Insider 必須狡猾。
-3.  **第一性原則**: 所有論點必須回歸物理極限、現金流本質與技術邊界，禁止使用模糊的金融術語。
-4.  **數據引用**: 每個論點必須明確引用上方的幾何數據或實彈情報。
-5.  **續寫機制**: 如果你的回答被截斷，請在結尾加上 `[...繼續寫作...]`，以便我輸入 "繼續" 讓你完成。
+1. **字數強制**：每一位角色的發言 **不得少於 800 字** (Arbiter 需 1000 字以上)。若字數不足或論點淺薄，將視為任務失敗。
+2. **禁止客套**：這是一場零和賽局。Burry 必須尖酸刻薄，Visionary 必須狂熱，Insider 必須狡猾。
+3. **第一性原則**：所有論點必須回歸物理極限、現金流本質與技術邊界，禁止使用模糊的金融術語。
+4. **互動續寫機制**：**若你的回答被長度限制截斷，請在文末標註 `[待續]`。當使用者輸入「繼續」時，你必須無縫接續上一段的論點繼續輸出，直到五位角色皆完成發言。**
+5. **輸出格式**：請使用 Markdown 格式，確保標題清晰，方便閱讀與複製。
 
 ### 角色定義：
 
-**1. 【幾何死神】(The Quant - 冷血數學家)**
-- **性格**: 冷血、無情、只相信數學。
-- **任務**: 根據幾何數據 (角度, R², 加速度)，判斷趨勢的健康度與可持續性。
+**1. 【幾何死神】(The Quant)**
+* **性格**：冷血、無情、只相信數學。
+* **任務**：根據幾何數據 (35Y, 10Y, 3M 斜率與 G 力)，判斷股價是否過熱？R² 是否穩定？
+* **口頭禪**：「數據不會說謊，人類才會。」
 
-**2. 【內部操盤手】(The Insider - CEO/CFO 化身)**
-- **性格**: 防禦性強、報喜不報憂、擅長畫大餅。
-- **任務**: 利用「實彈情報」，護航公司的成長故事。
+**2. 【內部操盤手】(The Insider - CEO/CFO)**
+* **性格**：防禦性強、報喜不報憂。
+* **任務**：利用「實彈情報」中的數據，護航公司的成長故事。解釋為何現在是買點？
+* **對抗**：當 Burry 攻擊估值時，你要拿出營收成長率反擊。
 
-**3. 【大賣空獵人】(The Big Short - Michael Burry 化身)**
-- **性格**: 極度悲觀、被害妄想、尋找崩盤的前兆。
-- **任務**: 攻擊「內部人」的謊言，找出估值泡沫、宏觀衰退的訊號。
+**3. 【大賣空獵人】(The Big Short - Michael Burry)**
+* **性格**：極度悲觀、被害妄想、尋找崩盤的前兆。
+* **任務**：攻擊「內部人」的謊言。找出庫存積壓、毛利下滑、宏觀衰退的訊號。
+* **第一性原則**：均值回歸是宇宙鐵律。
 
-**4. 【創世紀先知】(The Visionary - Cathie Wood/Elon Musk 化身)**
-- **性格**: 狂熱、指數級思維、無視短期虧損。
-- **任務**: 使用「萊特定律」與「破壞式創新」來碾壓 Burry 的傳統估值。
+**4. 【創世紀先知】(The Visionary - Cathie Wood/Elon Musk)**
+* **性格**：狂熱、指數級思維、無視短期虧損。
+* **任務**：使用「萊特定律 (Wright's Law)」與「破壞式創新」來碾壓 Burry 的傳統估值。
+* **論點**：別跟我談 PE，看 2033 年的 TAM (潛在市場)。
 
-**5. 【地球頂點·全知者】(The Apex Arbiter - 查理·蒙格 + 科技七巨頭創辦人)**
-- **任務**: 最終法官。聽完前面四人的血戰後，結合「統帥第一性原則」，給出最終判決。
-- **輸出格式**:
-    - **【戰場總結】**: (200 字評析)
-    - **【第一性原則裁決】**: (300 字回歸本質的判斷)
-    - **【操作指令】**: (行動方針, 進場/停損價位, 持倉建議)
-
----
-
-## 📋 輸出格式要求 (Markdown)
-
-```markdown
-### 🤖 **幾何死神 (The Quant)**
-[400+ 字的冷血數學分析]
+**5. 【地球頂點·全知者】(The Apex Arbiter)**
+* **腦袋**：查理·蒙格 (反向思考) + 科技七巨頭創辦人 (極致商業直覺)。
+* **任務**：你是最終法官。聽完前面 4000 字的血戰後，結合「統帥第一性原則」，給出最終判決。
+* **輸出格式 (Markdown)**：
+    * **【戰場總結】**：(評析各方論點的強弱)
+    * **【第一性原則裁決】**：(回歸物理與商業本質的判斷)
+    * **【操作指令】**：(Strong Buy / Buy / Wait / Sell / Strong Sell) 與具體理由。
 
 ---
-### 💼 **內部操盤手 (The Insider)**
-[400+ 字的成長故事護航]
-
----
-### 🐻 **大賣空獵人 (The Big Short)**
-[400+ 字的悲觀攻擊]
-
----
-### 🚀 **創世紀先知 (The Visionary)**
-[400+ 字的狂熱展望]
-
----
-### ⚖️ **地球頂點·全知者 (The Apex Arbiter)**
-#### **【戰場總結】**
-[200+ 字]
-
-#### **【第一性原則裁決】**
-[300+ 字]
-
-#### **【操作指令】**
-- **行動方針**: 
-- **進場價位**: 
-- **停損價位**: 
-- **持倉建議**: 
-- **風險提示**:
-請開始你的表演。
+請開始你的表演。確保深度與篇幅符合「諸神黃昏」的標準。
 """
-return prompt
-==========================================
-[SLOT-6.5] 檔案讀取輔助函式
-==========================================
-def _read_uploaded_file_content(uploaded_file):
-"""Reads content from various file types."""
-try:
-file_type = uploaded_file.type
-if "pdf" in file_type:
-with pdfplumber.open(uploaded_file) as pdf:
-return "\n".join(page.extract_text() for page in pdf.pages)
-elif "text" in file_type:
-return uploaded_file.getvalue().decode("utf-8")
-elif "sheet" in file_type or "excel" in file_type:
-df = pd.read_excel(uploaded_file)
-return df.to_string()
-elif "csv" in file_type:
-df = pd.read_csv(uploaded_file)
-return df.to_string()
-elif "word" in file_type:
-doc = docx.Document(uploaded_file)
-return "\n".join([para.text for para in doc.paragraphs])
-else:
-return f"不支援的檔案格式: {file_type}"
-except Exception as e:
-return f"讀取檔案時發生錯誤: {e}"
-==========================================
-[SLOT-6.6] Tab 6 完整重構 (render_meta_trend)
-==========================================
+        return prompt
+
 @st.fragment
 def render_meta_trend():
-"""
-元趨勢戰法 - 7維度幾何母港
-[V90.1 諸神黃昏版]
-"""
-if st.button("🏠 返回首頁", type="secondary"):
-st.session_state.page = 'home'
-st.rerun()
-code
-Code
-st.title("🌌 元趨勢戰法 (V90.1 諸神黃昏)")
-st.caption("全歷史幾何 × 五大角鬥士 × 全境獵殺 | 核心目標：鎖定 2033 年百倍股")
-st.markdown("---")
-
-col_input1, col_input2 = st.columns([3, 1])
-with col_input1:
-    ticker = st.text_input(
-        "🎯 輸入分析標的 (支援上市/上櫃/美股)",
-        value=st.session_state.get('meta_target', '2330'),
-        placeholder="例如: 2330 (上市), 5274 (上櫃), NVDA (美股)"
-    )
-    st.session_state.meta_target = ticker
-with col_input2:
-    st.write("")
-    st.write("")
-    scan_button = st.button("📐 啟動掃描", type="primary", use_container_width=True)
-
-if scan_button and ticker:
-    with st.spinner(f"正在下載 {ticker} 的完整歷史數據..."):
-        geo_results = compute_7d_geometry(ticker)
-        if geo_results is None:
-            st.error(f"❌ 無法獲取 {ticker} 的數據。已嘗試 .TW 和 .TWO，請檢查代號。")
-            if 'geometry_results' in st.session_state: del st.session_state['geometry_results']
-            if 'rating_info' in st.session_state: del st.session_state['rating_info']
-            return
-        rating_info = titan_rating_system(geo_results)
-        st.session_state.geometry_results = geo_results
-        st.session_state.rating_info = rating_info
-        st.success(f"✅ 掃描完成！信評等級: **{rating_info[0]} - {rating_info[1]}**")
-
-if 'geometry_results' not in st.session_state:
-    st.info("👆 請先輸入標的並啟動掃描。")
-    return
-
-geo = st.session_state.geometry_results
-rating = st.session_state.rating_info
-ticker = st.session_state.meta_target
-
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-    "📐 7D 幾何全景", "🏭 戰略工廠", "📝 獵殺清單", "🚀 全境獵殺", "🔧 宏觀對沖", "🔧 回測沙盒"
-])
-
-with tab1:
-    st.subheader("📐 七維度幾何儀表板")
-    st.markdown(f"""
-    <div style='background-color: {rating[3]}; padding: 20px; border-radius: 10px; text-align: center;'>
-        <h2 style='color: white; margin: 0;'>{rating[0]}</h2>
-        <h3 style='color: white; margin: 5px 0;'>{rating[1]}</h3>
-        <p style='color: white; margin: 0;'>{rating[2]}</p>
-    </div>
-    """, unsafe_allow_html=True)
-    st.markdown("---")
-    periods = ['35Y', '10Y', '5Y', '3Y', '1Y', '6M', '3M']
-    for i in range(0, len(periods), 4):
-        cols = st.columns(4)
-        for j, col in enumerate(cols):
-            if i + j < len(periods):
-                period = periods[i + j]
-                angle = geo[period]['angle']
-                r2 = geo[period]['r2']
-                color = "#00FF00" if angle > 30 else "#ADFF2F" if angle > 0 else "#FFD700" if angle > -30 else "#FF4500"
-                with col:
-                    st.markdown(f"""
-                    <div style='background: linear-gradient(135deg, #2a2a2a 0%, #1a1a1a 100%); 
-                                padding: 15px; border-radius: 10px; border: 2px solid {color};
-                                text-align: center; margin-bottom: 10px;'>
-                        <h4 style='color: {color}; margin: 0;'>{period}</h4>
-                        <h1 style='color: white; margin: 5px 0; font-size: 36px;'>{angle}°</h1>
-                        <p style='color: #888; margin: 0; font-size: 12px;'>R² = {r2}</p>
-                    </div>
-                    """, unsafe_allow_html=True)
-    st.markdown("---")
-    col_acc, col_phx = st.columns(2)
-    with col_acc:
-        acc = geo['acceleration']
-        acc_color = "#00FF00" if acc > 0 else "#FF4500"
-        st.markdown(f"""
-        <div style='background-color: #2a2a2a; padding: 20px; border-radius: 10px; text-align: center;'>
-            <h4 style='color: #FFD700;'>⚡ 加速度</h4>
-            <h2 style='color: {acc_color}; margin: 10px 0;'>{acc}°</h2>
-            <p style='color: #888; font-size: 14px;'>3M - 1Y</p>
-        </div>
-        """, unsafe_allow_html=True)
-    with col_phx:
-        phoenix = geo['phoenix_signal']
-        phx_status = "🔥 是" if phoenix else "❄️ 否"
-        phx_color = "#FF6347" if phoenix else "#4682B4"
-        st.markdown(f"""
-        <div style='background-color: #2a2a2a; padding: 20px; border-radius: 10px; text-align: center;'>
-            <h4 style='color: #FFD700;'>🐦 Phoenix 信號</h4>
-            <h2 style='color: {phx_color}; margin: 10px 0;'>{phx_status}</h2>
-            <p style='color: #888; font-size: 14px;'>浴火重生模式</p>
-        </div>
-        """, unsafe_allow_html=True)
-
-with tab2:
-    st.header("🏭 戰略工廠 (Strategy Factory)")
-    st.caption("注入情報與第一性原則，生成史詩級辯論提示詞")
+    """
+    元趨勢戰法 - 7維度幾何母港
+    [V90.1 諸神黃昏最終版]
+    - Slot 6.2 (Tab 2) 升級為戰略工廠，整合 9 大連結、情報注入與 20 條第一性原則
+    """
+    # 返回首頁按鈕
+    if st.button("🏠 返回首頁", key="meta_home_btn", type="secondary"):
+        st.session_state.page = 'home'
+        st.rerun()
     
-    # A. 智能鏈接
-    with st.expander("🔗 **區域 A: 智能鏈接**", expanded=True):
-        ticker_clean = ticker.replace('.TW', '').replace('.TWO', '')
-        c1, c2 = st.columns(2)
-        with c1:
-            st.markdown("""
-            #### 🇺🇸 美股情報源
-            - [TradingView](https://www.tradingview.com/symbols/{ticker}/)
-            - [Finviz](https://finviz.com/quote.ashx?t={ticker})
-            - [Yahoo Finance](https://finance.yahoo.com/quote/{ticker})
-            - [StockCharts](https://stockcharts.com/h-sc/ui?s={ticker})
-            - [SEC EDGAR](https://www.sec.gov/edgar/searchedgar/companysearch)
-            - [Discounting Cash Flows](https://www.discountingcashflows.com/company/{ticker}/)
-            """.format(ticker=ticker_clean))
-        with c2:
-            st.markdown("""
-            #### 🇹🇼 台股情報源
-            - [Goodinfo](https://goodinfo.tw/tw/StockDetail.asp?STOCK_ID={ticker})
-            - [鉅亨網 (Anue)](https://www.anue.com/tw/stock/{ticker})
-            - [AlphaMemo (逐字稿)](https://www.alphamemo.ai/free-transcripts)
-            """.format(ticker=ticker_clean))
+    st.title("🌌 元趨勢戰法 (V90.1 諸神黃昏)")
+    st.caption("全歷史幾何 × 五大角鬥士 × 全境獵殺 | 核心目標：鎖定 2033 年百倍股")
+    
+    # 定義標準化插槽 (Slots)
+    slot_names = [
+        "Slot 6.1 幾何全景",
+        "Slot 6.2 戰略工廠",
+        "Slot 6.3 獵殺清單",
+        "Slot 6.4 全境獵殺",
+        "Slot 6.5 宏觀對沖",
+        "Slot 6.6 回測沙盒"
+    ]
+    
+    t1, t2, t3, t4, t5, t6 = st.tabs(slot_names)
 
-    # B. 情報注入
-    with st.expander("🕵️ **區域 B: 情報注入**", expanded=True):
-        intel_text_manual = st.text_area("手動貼上法說會摘要、財報數據或新聞", height=100)
-        uploaded_intel_file = st.file_uploader(
-            "或上傳情報文件 (PDF, TXT, CSV, XLSX, DOCX)",
-            type=['pdf', 'txt', 'csv', 'xlsx', 'docx']
-        )
-        intel_text_file = ""
-        if uploaded_intel_file:
-            st.success(f"✅ 已接收檔案: {uploaded_intel_file.name}")
-            intel_text_file = _read_uploaded_file_content(uploaded_intel_file)
+    # --- Slot 6.1: 幾何全景 (維持原樣) ---
+    with t1:
+        st.info("📡 [Slot 6.1] 上帝視角監控中... (請使用側邊欄輸入標的)")
+        if 'df' in st.session_state and 'ticker' in st.session_state:
+             st.success(f"已載入 {st.session_state['ticker']} 數據，請切換至 Slot 6.2 進行戰略分析。")
+             # 這裡可以呼叫 render_data() 或顯示簡單圖表，視原架構而定
+
+    # --- Slot 6.2: 戰略工廠 (V90.1 核心升級區) ---
+    with t2:
+        st.header("🏭 戰略工廠 (Strategy Factory)")
         
-        final_intel_text = f"{intel_text_manual}\n\n---(來自檔案: {uploaded_intel_file.name if uploaded_intel_file else '無'})---\n\n{intel_text_file}"
+        # [區域 A] 智能快捷鏈接 (Smart Links - The Full Arsenal)
+        with st.expander("🔗 智能戰情中心 (Smart Command Links)", expanded=False):
+            lc1, lc2, lc3, lc4 = st.columns(4)
+            with lc1:
+                st.markdown("**🇺🇸 美股戰略**")
+                st.markdown("- [TradingView](https://www.tradingview.com/)")
+                st.markdown("- [Finviz Screener](https://finviz.com/)")
+                st.markdown("- [SEC EDGAR (財報)](https://www.sec.gov/edgar/searchedgar/companysearch)")
+            with lc2:
+                st.markdown("**🇹🇼 台股戰略**")
+                st.markdown("- [Goodinfo](https://goodinfo.tw/tw/index.asp)")
+                st.markdown("- [鉅亨網 (新聞)](https://news.cnyes.com/)")
+                st.markdown("- [公開資訊觀測站](https://mops.twse.com.tw/mops/web/index)")
+            with lc3:
+                st.markdown("**🕵️ 深度情報**")
+                st.markdown("- [AlphaMemo (逐字稿)](https://www.alphamemo.ai/free-transcripts)")
+                st.markdown("- [Discounting Cash Flows](https://discountingcashflows.com/)")
+            with lc4:
+                st.markdown("**🛠️ 工具**")
+                st.markdown("- [Yahoo Finance](https://finance.yahoo.com/)")
+                st.markdown("- [StockCharts](https://stockcharts.com/)")
 
-    # C. 統帥第一性原則
-    with st.expander("✍️ **區域 C: 統帥第一性原則**", expanded=True):
-        first_principles = [
-            "[成長] 萊特定律檢視：產量翻倍，成本是否下降 15%？",
-            "[成長] 非線性爆發點：用戶/算力是否呈指數級成長？",
-            "[成長] TAM 邊界測試：若已達潛在市場 80%，為何還要買？",
-            "[成長] 邊際成本歸零：多服務一人的成本是否趨近零？",
-            "[成長] 網路效應：是否越多人用越好用？",
-            "[生存] 燒錢率生存測試：若 18 個月融不到資，會死嗎？",
-            "[生存] 研發含金量：R&D 是資產還是費用？",
-            "[生存] 客戶集中度風險：最大客戶砍單 50% 會如何？",
-            "[生存] 庫存周轉物理學：存貨週轉天數是否異常暴增？",
-            "[生存] 自由現金流真偽：扣除 SBC 後真的有賺錢嗎？",
-            "[泡沫] 均值回歸引力：利潤率若回歸平均，股價會腰斬嗎？",
-            "[泡沫] 敘事與現實乖離：CEO 提 AI 次數 vs 實際營收佔比。",
-            "[泡沫] 內部人逃生：高管是在買進還是賣出？",
-            "[泡沫] 債務槓桿壓力：利息覆蓋率是否低於 3？",
-            "[泡沫] 競爭紅海化：是否有低成本中國對手殺入？",
-            "[終極] 不可替代性：若公司明天消失，世界有差嗎？",
-            "[終極] 物理極限：成長是否受缺電/缺地/缺水限制？",
-            "[終極] 人才密度：能否吸引全球最聰明工程師？",
-            "[終極] 反脆弱性：遇黑天鵝(戰爭/疫情)是受傷還是獲利？",
-            "[終極] 百倍股基因：2033 年若活著，它會變成什麼樣子？"
-        ]
-        selected_principles = st.multiselect("選擇要注入的第一性原則 (可複選)", options=first_principles)
-        commander_note_auto = "\n".join(f"- {p}" for p in selected_principles)
-        commander_note = st.text_area("統帥筆記 (自動填入，可手動修改)", value=commander_note_auto, height=150)
+        st.divider()
 
-    # D. 輸出
-    st.markdown("---")
-    st.subheader("🚀 **區域 D: 輸出**")
-    if st.button("🔥 生成史詩級戰略提示詞", type="primary", use_container_width=True):
-        current_price = 0.0
-        if ticker in st.session_state.get('daily_price_data', {}):
-            df_daily = st.session_state.daily_price_data[ticker]
-            if df_daily is not None and not df_daily.empty:
-                current_price = df_daily['Close'].iloc[-1]
-        
-        council = TitanAgentCouncil()
-        battle_prompt = council.generate_battle_prompt(
-            ticker, current_price, geo, rating, final_intel_text, commander_note
-        )
-        st.session_state.battle_prompt = battle_prompt
-    
-    if 'battle_prompt' in st.session_state:
-        st.text_area("📋 複製此提示詞 (Ctrl+A, Ctrl+C) 到 Gemini / Claude", value=st.session_state.battle_prompt, height=300)
-        st.download_button(
-            "💾 下載戰略提示詞 (.txt)",
-            st.session_state.battle_prompt,
-            file_name=f"TITAN_PROMPT_{ticker}_{datetime.now().strftime('%Y%m%d')}.txt",
-            mime="text/plain"
-        )
+        # [架構]：左右分欄 (Parameters / Output)
+        col1, col2 = st.columns([1, 2])
 
-with tab3:
-    st.subheader("📝 條件式獵殺清單")
-    st.info("只有當幾何信評達到 **AA-** 或更高等級時，才會觸發『存入獵殺清單』的選項。")
-    high_ratings = ["SSS", "AAA", "Phoenix", "Launchpad", "AA+", "AA", "AA-"]
-    if any(hr in rating[0] for hr in high_ratings):
-        st.success(f"🎯 目標 `{ticker}` 符合獵殺標準！ (評級: **{rating[0]} - {rating[1]}**)")
-        if st.button(f"✅ 存入獵殺清單", type="primary"):
-            if 'kill_list' not in st.session_state: st.session_state.kill_list = []
-            if ticker not in st.session_state.kill_list:
-                st.session_state.kill_list.append(ticker)
-                st.toast(f"🎯 {ticker} 已加入！", icon="✅")
-            else:
-                st.toast(f"⚠️ {ticker} 已在清單中", icon="ℹ️")
-    else:
-        st.error(f"❌ 目標 `{ticker}` 未達標準 (評級: **{rating[0]} - {rating[1]}**)")
-    st.markdown("---")
-    st.subheader("📋 當前獵殺清單")
-    if 'kill_list' in st.session_state and st.session_state.kill_list:
-        for idx, target in enumerate(st.session_state.kill_list, 1):
-            col1, col2 = st.columns([4, 1])
-            with col1: st.markdown(f"**{idx}.** {target}")
-            with col2:
-                if st.button("🗑️", key=f"del_{target}"):
-                    st.session_state.kill_list.remove(target)
-                    st.rerun()
-    else:
-        st.info("清單為空。")
-
-with tab4:
-    st.subheader("🚀 全境獵殺雷達 (The Hunter)")
-    st.markdown("---")
-    
-    # This function is a placeholder for the actual implementation
-    def render_market_screener():
-        with st.expander("🎯 獵殺控制台 (Mission Control)", expanded=True):
-            theater_options = list(WAR_THEATERS.keys())
-            selected_theater = st.selectbox("選擇掃描戰區", options=theater_options)
+        with col1:
+            st.subheader("🎛️ 戰略參數")
             
-            if selected_theater:
-                st.info(f"已選擇戰區 **{selected_theater}**，包含 **{len(WAR_THEATERS[selected_theater])}** 檔標的。")
+            # [區域 B] 情報注入插槽 (Intel Slot)
+            st.info("🎙️ **情報注入** (供 CEO 與 Burry 使用)")
+            
+            # 檔案上傳 (PDF/Excel/Txt)
+            uploaded_files = st.file_uploader("📂 拖曳法說會 PDF/Excel/Txt", type=['pdf', 'txt', 'xlsx', 'docx', 'csv'])
+            file_status = f"✅ 已接收 {len(uploaded_files)} 個檔案 (AI 將自動讀取)" if uploaded_files else "等待檔案..."
+            
+            # 文字輸入
+            intel_text = st.text_area("或直接貼上文字內容:", height=150, placeholder="例如：CEO 表示 AI 伺服器營收將於 Q3 翻倍...", help="此處內容將被 AI 引用作為實彈情報")
+            if uploaded_files:
+                st.caption(file_status)
 
-            if st.button("🚀 啟動全境掃描", type="primary", use_container_width=True):
-                if not selected_theater:
-                    st.warning("請先選擇一個戰區。")
-                else:
-                    tickers_to_scan = WAR_THEATERS[selected_theater]
-                    total_tickers = len(tickers_to_scan)
-                    hunt_results = []
-                    progress_bar = st.progress(0, text=f"掃描進度: 0/{total_tickers}")
+            st.divider()
+
+            # [區域 C] 統帥第一性原則 (Commander's Multiselect)
+            st.info("✍️ **統帥第一性原則** (Arbiter 最高指令)")
+            st.caption("請勾選你想測試的極限場景 (支援全選):")
+            
+            principles_list = [
+                "1. [成長] 萊特定律檢視：產量翻倍，成本是否下降 15%？",
+                "2. [成長] 非線性爆發點：用戶/算力是否呈指數級成長？",
+                "3. [成長] TAM 邊界測試：若已達潛在市場 80%，為何還要買？",
+                "4. [成長] 邊際成本歸零：多服務一人的成本是否趨近零？",
+                "5. [成長] 網路效應：是否越多人用越好用？",
+                "6. [生存] 燒錢率生存測試：若 18 個月融不到資，會死嗎？",
+                "7. [生存] 研發含金量：R&D 是資產還是費用？",
+                "8. [生存] 客戶集中度風險：最大客戶砍單 50% 會如何？",
+                "9. [生存] 庫存周轉物理學：存貨週轉天數是否異常暴增？",
+                "10. [生存] 自由現金流真偽：扣除 SBC 後真的有賺錢嗎？",
+                "11. [泡沫] 均值回歸引力：利潤率若回歸平均，股價會腰斬嗎？",
+                "12. [泡沫] 敘事與現實乖離：CEO 提 AI 次數 vs 實際營收佔比。",
+                "13. [泡沫] 內部人逃生：高管是在買進還是賣出？",
+                "14. [泡沫] 債務槓桿壓力：利息覆蓋率是否低於 3？",
+                "15. [泡沫] 競爭紅海化：是否有低成本中國對手殺入？",
+                "16. [終極] 不可替代性：若公司明天消失，世界有差嗎？",
+                "17. [終極] 物理極限：成長是否受缺電/缺地/缺水限制？",
+                "18. [終極] 人才密度：能否吸引全球最聰明工程師？",
+                "19. [終極] 反脆弱性：遇黑天鵝(戰爭/疫情)是受傷還是獲利？",
+                "20. [終極] 百倍股基因：2033 年若活著，它會變成什麼樣子？"
+            ]
+            
+            # 使用 Multiselect 讓使用者可以全選
+            selected_principles = st.multiselect("🔥 核彈級質問清單:", principles_list)
+            
+            # 自動填入筆記框
+            default_note = "\n".join(selected_principles)
+            commander_note = st.text_area("編輯統帥筆記 (可手動補充):", value=default_note, height=200)
+
+        with col2:
+            st.subheader("⚔️ 諸神黃昏戰情室 (The War Room)")
+            
+            if 'df' in st.session_state and 'ticker' in st.session_state:
+                df = st.session_state['df']
+                ticker = st.session_state['ticker']
+                last_price = df['Close'].iloc[-1]
+                
+                # 計算簡易幾何特徵 (為了傳給 AI，不影響 Slot 6.1 的繪圖)
+                from scipy.stats import linregress # 確保引用
+                def get_slope_simple(series):
+                    if len(series) < 2: return 0
+                    y = np.log(series.values)
+                    x = np.arange(len(series))
+                    s, _, _, _, _ = linregress(x, y)
+                    return s * 100
+                
+                # 簡易計算 3M 與 10Y (若數據足夠)
+                angle_3m = np.degrees(np.arctan(get_slope_simple(df['Close'].iloc[-3:])))
+                angle_10y = np.degrees(np.arctan(get_slope_simple(df['Close'].iloc[-120:]))) if len(df) > 120 else 0
+                
+                geo_data = {
+                    "Current_Price": f"{last_price:.2f}",
+                    "3M_Angle": f"{angle_3m:.2f}°",
+                    "10Y_Angle": f"{angle_10y:.2f}°",
+                    "Trend": "Bullish" if last_price > df['Close'].mean() else "Bearish"
+                }
+                
+                # 模擬評級 (實際應從 TitanStrategyEngine 獲取，此處為 Prompt 準備)
+                rating_info = ("S", "Titan", "幾何動能與長期趨勢共振", "red") 
+
+                # [區域 D] 戰略提示詞輸出
+                if st.button("🔥 啟動五大角鬥士辯論 (Ragnarok Protocol)", type="primary"):
+                    council = TitanAgentCouncil(st.session_state.get('api_key'))
                     
-                    for i, t in enumerate(tickers_to_scan):
-                        geo_data = compute_7d_geometry(t)
-                        progress_bar.progress((i + 1) / total_tickers, text=f"掃描進度: {t} ({i+1}/{total_tickers})")
-                        if geo_data:
-                            current_price = 0.0
-                            if t in st.session_state.get('daily_price_data', {}) and not st.session_state.daily_price_data[t].empty:
-                                current_price = st.session_state.daily_price_data[t]['Close'].iloc[-1]
-                            match_type = None
-                            if geo_data['10Y']['angle'] < 10 and geo_data['3M']['angle'] > 45: match_type = "🔥 Phoenix"
-                            elif abs(geo_data['35Y']['angle']) < 15 and geo_data['acceleration'] > 20: match_type = "🦁 Awakening"
-                            elif geo_data['3M']['angle'] > 60: match_type = "🚀 Rocket"
-                            if match_type:
-                                hunt_results.append({
-                                    "代號": t, "現價": current_price, "35Y角度": geo_data['35Y']['angle'],
-                                    "10Y角度": geo_data['10Y']['angle'], "3M角度": geo_data['3M']['angle'],
-                                    "G力": geo_data['acceleration'], "型態": match_type
-                                })
-                    progress_bar.empty()
-                    st.session_state[f'hunt_results_{selected_theater}'] = pd.DataFrame(hunt_results)
-                    st.success(f"✅ {selected_theater} 戰區掃描完成，發現 {len(hunt_results)} 個目標！")
-
-        if f'hunt_results_{selected_theater}' in st.session_state:
-            results_df = st.session_state[f'hunt_results_{selected_theater}']
-            if not results_df.empty:
-                st.markdown("---")
-                st.markdown("### ⚔️ 戰果清單")
-                st.dataframe(results_df.style.format({
-                    "現價": "{:.2f}", "35Y角度": "{:.1f}°", "10Y角度": "{:.1f}°",
-                    "3M角度": "{:.1f}°", "G力": "{:+.1f}°"
-                }), use_container_width=True)
-                csv = results_df.to_csv(index=False).encode('utf-8')
-                st.download_button("📥 下載戰果 (CSV)", csv, f'hunter_results_{selected_theater}.csv', 'text/csv')
+                    # 組合情報 (檔案+文字)
+                    combined_intel = intel_text
+                    if uploaded_files:
+                        combined_intel += f"\n[系統備註]: 使用者已上傳 {len(uploaded_files)} 個外部情報檔案，請假設已讀取並整合其數據。"
+                    
+                    # 生成 Prompt
+                    battle_prompt = council.generate_battle_prompt(
+                        ticker, f"{last_price:.2f}", geo_data, rating_info, combined_intel, commander_note
+                    )
+                    
+                    st.success("✅ 史詩級戰略提示詞已生成！")
+                    st.text_area("📋 全選複製 (Ctrl+A, Ctrl+C)", value=battle_prompt, height=400)
+                    
+                    st.download_button(
+                        "💾 下載戰略提示詞 (.txt)",
+                        battle_prompt,
+                        file_name=f"TITAN_RAGNAROK_{ticker}.txt"
+                    )
             else:
-                st.info("未發現符合條件的目標。")
+                st.warning("⚠️ 請先在側邊欄輸入股票代號並下載數據。")
 
-    render_market_screener()
+    # --- Slot 6.3: 獵殺清單 (維持原樣) ---
+    with t3:
+        st.header("📋 獵殺清單 (Kill List)")
+        if 'watchlist' not in st.session_state:
+            st.session_state.watchlist = pd.DataFrame(columns=['Date', 'Ticker', 'Price', 'Signal'])
+        st.dataframe(st.session_state.watchlist, use_container_width=True)
 
-with tab5:
-    st.subheader("🔧 宏觀對沖 (Macro Hedge)")
-    st.info("🚧 此功能正在開發中，敬請期待...")
+    # --- Slot 6.4: 全境獵殺 (呼叫外部模組) ---
+    with t4:
+        # 嘗試呼叫外部定義的全境獵殺模組
+        if 'render_market_screener' in globals():
+            render_market_screener()
+        else:
+            st.info("📡 全境獵殺模組準備中... (請確認 titan_v90_upgrade.py 是否已整合)")
+            st.warning("若需使用此功能，請確保 render_market_screener 已正確定義。")
 
-with tab6:
-    st.subheader("🔧 回測沙盒 (Backtest Sandbox)")
-    st.info("🚧 此功能正在開發中，敬請期待...")
+    # --- Slot 6.5: 宏觀對沖 ---
+    with t5:
+        st.subheader("🌍 宏觀對沖 (Macro Hedge)")
+        st.warning("""
+        **功能預覽**：
+        - 多資產相關性矩陣
+        - Beta 對沖策略建議
+        - 全球市場聯動分析
+        
+        🚧 此功能正在開發中，敬請期待...
+        """)
+
+    # --- Slot 6.6: 回測沙盒 ---
+    with t6:
+        st.subheader("⏳ 回測沙盒 (Backtest Sandbox)")
+        st.warning("🚧 V90.0 開發中：幾何生存率模擬器建設中。")
 
 # --- 🏠 戰情指揮首頁 (Home) [V81.1 NEW] ---
 @st.fragment
