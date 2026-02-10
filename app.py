@@ -3337,6 +3337,7 @@ Phoenix 信號: {'🔥 觸發' if geo_data['phoenix_signal'] else '❄️ 未觸
 ---
 ```
 
+
 請開始你的表演。確保每個角色的論述都具有深度與獨特性，避免重複論點，並且每位角色都必須引用前面角色的觀點進行互動。字數要求是最低門檻，請盡量詳細展開論述。
 """
         return prompt
@@ -3880,123 +3881,146 @@ def render_meta_trend():
                 st.caption(f"📊 提示詞統計：{len(battle_prompt_factory)} 字元")
 
     # ==========================================
-    # [TAB 3] 獵殺清單 - V90.3 動態戰果追蹤升級
+    # [TAB 3] 獵殺清單 - V90.3 自動戰果結算系統
     # ==========================================
     with tab3:
-        st.subheader("📝 動態戰果追蹤系統 (Kill List Dashboard)")
+        st.subheader("📝 自動戰果結算系統 (Kill List Dashboard)")
 
-        # --- 1. 戰果錄入介面 (The Logbook) ---
-        with st.expander("📝 錄入諸神裁決 (Log Arbiter's Verdict)", expanded=False):
-            with st.form("verdict_form", clear_on_submit=True):
-                log_ticker = st.text_input("股票代號 (Ticker)", value=st.session_state.meta_target)
-                log_verdict = st.selectbox("AI 裁決 (Verdict)", ["Strong Buy", "Buy", "Hold", "Sell", "Strong Sell"])
+        # --- A. 戰果錄入區 (The Logbook) ---
+        with st.expander("📝 錄入新獵殺目標 (Log New Target)", expanded=False):
+            with st.form("target_form", clear_on_submit=True):
+                log_ticker = st.text_input("代號 (Ticker)", value=st.session_state.meta_target)
+                log_action = st.selectbox("操作 (Action)", ["Buy", "Sell"])
+                log_entry = st.number_input("進場價 (Entry Price)", min_value=0.0, format="%.2f")
                 log_target = st.number_input("目標價 (Target Price)", min_value=0.0, format="%.2f")
                 log_stop_loss = st.number_input("停損價 (Stop Loss)", min_value=0.0, format="%.2f")
-                log_rationale = st.text_area("關鍵理由 (Key Rationale)", placeholder="簡述 AI 裁決的核心邏輯...")
+                log_rationale = st.text_area("理由 (Rationale)", placeholder="簡述進場的核心邏輯...")
                 
-                submitted = st.form_submit_button("💾 存入獵殺清單", type="primary")
+                submitted = st.form_submit_button("💾 存入戰情室", type="primary")
                 
                 if submitted:
-                    if not log_ticker:
-                        st.warning("請輸入股票代號。")
+                    if not log_ticker or log_entry <= 0:
+                        st.warning("請輸入有效的代號與進場價。")
                     else:
                         # 初始化 watchlist
                         if 'watchlist' not in st.session_state:
                             st.session_state.watchlist = pd.DataFrame(columns=[
-                                "Date", "Ticker", "Verdict", "Target Price", 
-                                "Stop Loss", "Key Rationale"
+                                "Date", "Ticker", "Action", "Entry Price", "Target Price", 
+                                "Stop Loss", "Rationale", "Status", "Current Price", "PnL %"
                             ])
                         
                         # 創建新紀錄
                         new_entry = pd.DataFrame([{
                             "Date": datetime.now().strftime("%Y-%m-%d"),
                             "Ticker": log_ticker.upper(),
-                            "Verdict": log_verdict,
+                            "Action": log_action,
+                            "Entry Price": log_entry,
                             "Target Price": log_target,
                             "Stop Loss": log_stop_loss,
-                            "Key Rationale": log_rationale
+                            "Rationale": log_rationale,
+                            "Status": "⏳ Holding", # 預設狀態
+                            "Current Price": np.nan, # 待更新
+                            "PnL %": np.nan # 待更新
                         }])
                         
                         # 新增到 watchlist
                         st.session_state.watchlist = pd.concat(
                             [st.session_state.watchlist, new_entry], 
                             ignore_index=True
-                        )
-                        st.success(f"✅ {log_ticker} 的裁決已成功錄入！")
+                        ).drop_duplicates(subset=['Ticker', 'Entry Price'], keep='last')
+                        
+                        st.success(f"✅ {log_ticker} 已成功存入戰情室！")
 
         st.markdown("---")
 
-        # --- 2. 獵殺清單儀表板 (The Dashboard) ---
-        st.subheader("📋 當前獵殺清單")
+        # --- B. 鏡像結算引擎 (The Mirror Engine) ---
+        if st.button("🔄 更新最新戰況 (Refresh PnL)", use_container_width=True):
+            if 'watchlist' in st.session_state and not st.session_state.watchlist.empty:
+                with st.spinner("啟動鏡像結算引擎..."):
+                    watchlist_df = st.session_state.watchlist.copy()
+                    tickers_to_update = watchlist_df['Ticker'].unique().tolist()
+                    
+                    # 一次性抓取所有價格
+                    prices_data = yf.download(tickers_to_update, period="1d", progress=False)
+                    
+                    updated_rows = []
+                    for index, row in watchlist_df.iterrows():
+                        try:
+                            # 獲取最新價格
+                            if len(tickers_to_update) > 1:
+                                current_price = prices_data['Close'][row['Ticker']].iloc[-1]
+                            else:
+                                current_price = prices_data['Close'].iloc[-1]
+                            
+                            if pd.isna(current_price):
+                                updated_rows.append(row)
+                                continue
 
+                            row['Current Price'] = current_price
+                            
+                            # 計算 PnL
+                            if row['Action'] == 'Buy':
+                                pnl = ((current_price / row['Entry Price']) - 1) * 100
+                            else: # Sell
+                                pnl = ((row['Entry Price'] / current_price) - 1) * 100
+                            row['PnL %'] = pnl
+                            
+                            # 判決邏輯
+                            if row['Action'] == 'Buy':
+                                if current_price >= row['Target Price']:
+                                    row['Status'] = '🏆 Win'
+                                elif current_price <= row['Stop Loss']:
+                                    row['Status'] = '💀 Loss'
+                                else:
+                                    row['Status'] = '⏳ Holding'
+                            else: # Sell
+                                if current_price <= row['Target Price']:
+                                    row['Status'] = '🏆 Win'
+                                elif current_price >= row['Stop Loss']:
+                                    row['Status'] = '💀 Loss'
+                                else:
+                                    row['Status'] = '⏳ Holding'
+                                    
+                            updated_rows.append(row)
+                        except Exception:
+                            updated_rows.append(row) # 如果出錯，保留原樣
+                    
+                    st.session_state.watchlist = pd.DataFrame(updated_rows)
+                    st.toast("戰況已更新！", icon="🔄")
+            else:
+                st.info("清單為空，無可更新的戰況。")
+
+        # --- C. 戰績儀表板 (Scoreboard) & D. 顯示表格 ---
         if 'watchlist' not in st.session_state or st.session_state.watchlist.empty:
-            st.info("清單為空，請使用上方表單錄入 AI 裁決。")
+            st.info("戰情室目前無獵殺目標。")
         else:
             watchlist_df = st.session_state.watchlist.copy()
             
-            # 準備即時數據
-            display_data = []
-            with st.spinner("正在覆核幾何數據與即時報價..."):
-                for index, row in watchlist_df.iterrows():
-                    ticker_to_check = row["Ticker"]
-                    
-                    # 幾何覆核
-                    geo_check = compute_7d_geometry(ticker_to_check)
-                    angle_3m = geo_check['3M']['angle'] if geo_check else "N/A"
-                    
-                    # 當前價
-                    current_price = "N/A"
-                    if ticker_to_check in st.session_state.get('daily_price_data', {}):
-                        price_df = st.session_state.daily_price_data[ticker_to_check]
-                        if price_df is not None and not price_df.empty:
-                            current_price = price_df['Close'].iloc[-1]
-                    
-                    # 距離目標價
-                    dist_to_target = "N/A"
-                    if isinstance(current_price, (int, float)) and row["Target Price"] > 0:
-                        dist_to_target = ((row["Target Price"] / current_price) - 1) * 100
-                    
-                    new_row = row.to_dict()
-                    new_row["3M Angle"] = angle_3m
-                    new_row["Current Price"] = current_price
-                    new_row["Distance to Target"] = dist_to_target
-                    display_data.append(new_row)
-
-            display_df = pd.DataFrame(display_data)
+            # 計算 Metrics
+            holding_count = len(watchlist_df[watchlist_df['Status'] == '⏳ Holding'])
+            win_count = len(watchlist_df[watchlist_df['Status'] == '🏆 Win'])
+            loss_count = len(watchlist_df[watchlist_df['Status'] == '💀 Loss'])
+            avg_pnl = watchlist_df['PnL %'].mean()
             
-            # 顯示表格
-            st.dataframe(display_df[[
-                "Date", "Ticker", "Verdict", "3M Angle", 
-                "Current Price", "Target Price", "Distance to Target"
-            ]].style.format({
-                "3M Angle": "{:.1f}°",
-                "Current Price": "{:.2f}",
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("目前持倉", f"{holding_count} 檔")
+            m2.metric("勝場", f"{win_count} 檔")
+            m3.metric("敗場", f"{loss_count} 檔")
+            m4.metric("平均 PnL", f"{avg_pnl:.2f}%" if not pd.isna(avg_pnl) else "N/A")
+            
+            st.dataframe(watchlist_df.style.format({
+                "Entry Price": "{:.2f}",
                 "Target Price": "{:.2f}",
-                "Distance to Target": "{:+.1f}%"
+                "Stop Loss": "{:.2f}",
+                "Current Price": "{:.2f}",
+                "PnL %": "{:+.2f}%"
             }), use_container_width=True)
 
-            # --- 3. 管理功能 ---
-            st.markdown("---")
-            st.subheader("🔧 管理清單")
-            
-            if not display_df.empty:
-                col1, col2 = st.columns([3, 1])
-                with col1:
-                    idx_to_delete = st.selectbox(
-                        "選擇要刪除的項目", 
-                        options=display_df.index,
-                        format_func=lambda x: f"{display_df.loc[x, 'Date']} - {display_df.loc[x, 'Ticker']}"
-                    )
-                with col2:
-                    st.write("") # for alignment
-                    st.write("")
-                    if st.button("🗑️ 刪除選定項目", type="secondary", use_container_width=True):
-                        st.session_state.watchlist = st.session_state.watchlist.drop(index=idx_to_delete).reset_index(drop=True)
-                        st.toast("項目已刪除！", icon="🗑️")
-                        st.rerun()
-            else:
-                st.info("無可刪除項目。")
-
+            if st.button("🗑️ 清空清單", type="secondary", use_container_width=True):
+                st.session_state.watchlist = pd.DataFrame(columns=st.session_state.watchlist.columns)
+                st.toast("獵殺清單已清空！", icon="🗑️")
+                st.rerun()
+    
     # ==========================================
     # [TAB 4] 全境獵殺 - V90.2 瓦爾基里升級 (完全保留)
     # ==========================================
