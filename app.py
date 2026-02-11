@@ -3385,38 +3385,45 @@ def render_meta_trend():
     st.caption("全歷史幾何 × 五大角鬥士 × 20 條第一性原則 × 🤖 自動情報抓取 | 核心目標：鎖定 2033 年百倍股")
     st.markdown("---")
     
-    # [V91.0] 內建抗雜訊解析器
+    # [V91.0] 內建抗雜訊解析器 (Excel 直讀版)
     def parse_uploaded_files(uploaded_files):
         data = {"dashboard": None, "logic": None, "breadth": None, "portfolio": None}
         for file in uploaded_files:
             try:
-                # A. 解析 Dashboard.csv (找 Phase)
-                if "Dashboard" in file.name:
-                    df = pd.read_csv(file)
-                    mask = df.iloc[:, 0].astype(str).str.contains("AI 資金戰略指令|當前循環階段", na=False)
-                    if mask.any():
-                        data["dashboard"] = df[mask].iloc[0, 1]
+                # 判斷是否為 Excel 檔
+                if file.name.endswith('.xlsx'):
+                    # A. 解析 Dashboard (找 Phase)
+                    try:
+                        df_dash = pd.read_excel(file, sheet_name='Dashboard')
+                        mask = df_dash.iloc[:, 0].astype(str).str.contains("AI 資金戰略指令|當前循環階段", na=False)
+                        if mask.any():
+                            data["dashboard"] = df_dash[mask].iloc[0, 1]
+                    except: pass # 該分頁可能不存在
 
-                # B. 解析 Logic_Engine.csv (找紅綠燈)
-                elif "Logic" in file.name:
-                    df = pd.read_csv(file)
-                    data["logic"] = df.iloc[:, [0, 1, 2]].values.tolist()
+                    # B. 解析 Logic_Engine (找紅綠燈)
+                    try:
+                        df_logic = pd.read_excel(file, sheet_name='Logic_Engine')
+                        data["logic"] = df_logic.iloc[:, [0, 1, 2]].values.tolist()
+                    except: pass
 
-                # C. 解析 美股寬度 (找河流圖數據)
-                elif "寬度" in file.name:
-                    df = pd.read_csv(file, header=None)
-                    df[0] = df[0].astype(str)
-                    valid_rows = df[df[0].str.match(r'\d{4}-\d{2}-\d{2}')].copy()
-                    valid_rows[0] = pd.to_datetime(valid_rows[0])
-                    valid_rows[1] = pd.to_numeric(valid_rows[1], errors='coerce') * 100 
-                    data["breadth"] = valid_rows.iloc[:, :2].rename(columns={0:'Date', 1:'Ratio'})
+                    # C. 解析 美股寬度 (找河流圖數據)
+                    try:
+                        df_breadth = pd.read_excel(file, sheet_name='美股寬度紀錄', header=None)
+                        df_breadth[0] = df_breadth[0].astype(str)
+                        valid_rows = df_breadth[df_breadth[0].str.match(r'\d{4}-\d{2}-\d{2}')].copy()
+                        valid_rows[0] = pd.to_datetime(valid_rows[0])
+                        valid_rows[1] = pd.to_numeric(valid_rows[1], errors='coerce') * 100 
+                        data["breadth"] = valid_rows.iloc[:, :2].rename(columns={0:'Date', 1:'Ratio'})
+                    except: pass
 
-                # D. 解析 Portfolio (找現金)
-                elif "Portfolio" in file.name:
-                    df = pd.read_csv(file)
-                    mask = df.iloc[:, 1].astype(str).str.contains("CASH", case=False, na=False)
-                    if mask.any():
-                        data["portfolio"] = df[mask].iloc[0, 5]
+                    # D. 解析 Portfolio (找現金)
+                    try:
+                        df_port = pd.read_excel(file, sheet_name='Portfolio')
+                        mask = df_port.iloc[:, 1].astype(str).str.contains("CASH", case=False, na=False)
+                        if mask.any():
+                            data["portfolio"] = df_port[mask].iloc[0, 5]
+                    except: pass
+                    
             except Exception as e:
                 st.error(f"解析 {file.name} 失敗: {e}")
         return data
