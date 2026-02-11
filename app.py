@@ -2589,7 +2589,7 @@ def render_data():
         else:
             st.info("請上傳 CB 清單以掃描時間套利事件。")
 
-# --- 🧠 元趨勢戰法 (Meta-Trend) [V99.9 諸神黃昏計畫 (完整區塊替換)] ---
+# --- 🧠 元趨勢戰法 (Meta-Trend) [V90.3 獵殺清單升級] ---
 # ============================================================================================================
 # [V90.3 PROJECT VALKYRIE - Kill List Upgrade]:
 # - Slot 6.3 重構: 升級為「動態戰果追蹤系統」，可手動錄入 AI 裁決與目標價。
@@ -3338,8 +3338,6 @@ Phoenix 信號: {'🔥 觸發' if geo_data['phoenix_signal'] else '❄️ 未觸
 ```
 
 
-
-
 請開始你的表演。確保每個角色的論述都具有深度與獨特性，避免重複論點，並且每位角色都必須引用前面角色的觀點進行互動。字數要求是最低門檻，請盡量詳細展開論述。
 """
         return prompt
@@ -3372,62 +3370,20 @@ Phoenix 信號: {'🔥 觸發' if geo_data['phoenix_signal'] else '❄️ 未觸
 def render_meta_trend():
     """
     元趨勢戰法 - 7維度幾何母港
-    [V91.0 神盾計畫升級]
-    - Slot 6.5: 升級為「宏觀數位雙生」，可上傳4大CSV檔案進行宏觀對沖分析。
-    - 完整保留 Slot 6.1/6.2/6.3/6.4/6.6 原有 V90.3 邏輯。
+    [V90.3 獵殺清單升級]
+    - Tab 3: 升級為「動態戰果追蹤系統」，可手動錄入 AI 裁決與目標價。
+    - Tab 3: 儀表板即時覆核幾何數據 (3M Angle) 與當前價格，動態計算戰果。
+    - 完整保留 Slot 6.1/6.2/6.4/6.5/6.6 原有 V90.2 邏輯。
     """
     # 返回首頁按鈕
     if st.button("🏠 返回首頁", type="secondary"):
         st.session_state.page = 'home'
         st.rerun()
     
-    st.title("🌌 元趨勢戰法 (V91.0 神盾計畫)")
+    st.title("🌌 元趨勢戰法 (V90.3 獵殺清單升級)")
     st.caption("全歷史幾何 × 五大角鬥士 × 20 條第一性原則 × 🤖 自動情報抓取 | 核心目標：鎖定 2033 年百倍股")
     st.markdown("---")
     
-    # [V91.0] 內建抗雜訊解析器 (Excel 直讀版)
-    def parse_uploaded_files(uploaded_files):
-        data = {"dashboard": None, "logic": None, "breadth": None, "portfolio": None}
-        for file in uploaded_files:
-            try:
-                # 判斷是否為 Excel 檔
-                if file.name.endswith('.xlsx'):
-                    # A. 解析 Dashboard (找 Phase)
-                    try:
-                        df_dash = pd.read_excel(file, sheet_name='Dashboard')
-                        mask = df_dash.iloc[:, 0].astype(str).str.contains("AI 資金戰略指令|當前循環階段", na=False)
-                        if mask.any():
-                            data["dashboard"] = df_dash[mask].iloc[0, 1]
-                    except: pass # 該分頁可能不存在
-
-                    # B. 解析 Logic_Engine (找紅綠燈)
-                    try:
-                        df_logic = pd.read_excel(file, sheet_name='Logic_Engine')
-                        data["logic"] = df_logic.iloc[:, [0, 1, 2]].values.tolist()
-                    except: pass
-
-                    # C. 解析 美股寬度 (找河流圖數據)
-                    try:
-                        df_breadth = pd.read_excel(file, sheet_name='美股寬度紀錄', header=None)
-                        df_breadth[0] = df_breadth[0].astype(str)
-                        valid_rows = df_breadth[df_breadth[0].str.match(r'\d{4}-\d{2}-\d{2}')].copy()
-                        valid_rows[0] = pd.to_datetime(valid_rows[0])
-                        valid_rows[1] = pd.to_numeric(valid_rows[1], errors='coerce') * 100 
-                        data["breadth"] = valid_rows.iloc[:, :2].rename(columns={0:'Date', 1:'Ratio'})
-                    except: pass
-
-                    # D. 解析 Portfolio (找現金)
-                    try:
-                        df_port = pd.read_excel(file, sheet_name='Portfolio')
-                        mask = df_port.iloc[:, 1].astype(str).str.contains("CASH", case=False, na=False)
-                        if mask.any():
-                            data["portfolio"] = df_port[mask].iloc[0, 5]
-                    except: pass
-                    
-            except Exception as e:
-                st.error(f"解析 {file.name} 失敗: {e}")
-        return data
-
     # ========== 標的輸入 ==========
     col_input1, col_input2 = st.columns([3, 1])
     
@@ -3482,7 +3438,7 @@ def render_meta_trend():
         "🏭 戰略工廠",
         "📝 獵殺清單",
         "🚀 全境獵殺",
-        "🌐 宏觀數位雙生",
+        "🔧 宏觀對沖",
         "🔧 回測沙盒"
     ])
     
@@ -3925,7 +3881,7 @@ def render_meta_trend():
                 st.caption(f"📊 提示詞統計：{len(battle_prompt_factory)} 字元")
 
     # ==========================================
-    # [TAB 3] 獵殺清單 - V90.3 自動戰果結算系統 (完全保留)
+    # [TAB 3] 獵殺清單 - V90.3 自動戰果結算系統
     # ==========================================
     with tab3:
         st.subheader("📝 自動戰果結算系統 (Kill List Dashboard)")
@@ -4320,82 +4276,19 @@ def render_meta_trend():
                 st.info("未發現符合條件的目標，請嘗試其他戰區。")
     
     # ==========================================
-    # [TAB 5] V91.0 宏觀數位雙生
+    # [TAB 5-6] 維修中插槽 (完全保留)
     # ==========================================
     with tab5:
-        st.subheader("🌐 宏觀數位雙生 (Macro Digital Twin)")
-        st.info("請上傳 4 個宏觀 CSV 檔案，以啟動神盾對沖系統。")
-
-        uploaded_macro_files = st.file_uploader(
-            "上傳 Dashboard, Logic_Engine, 美股寬度, Portfolio CSV 檔案",
-            type=['csv'],
-            accept_multiple_files=True,
-            key="macro_twin_uploader"
-        )
-
-        if uploaded_macro_files:
-            with st.spinner("正在解析宏觀數據..."):
-                macro_data = parse_uploaded_files(uploaded_macro_files)
-            
-            st.markdown("---")
-
-            # Hero Banner
-            phase = macro_data.get("dashboard")
-            if phase and "3" in str(phase):
-                st.markdown("""
-                <div style="background: linear-gradient(90deg, #8B0000, #FFD700); padding: 20px; border-radius: 10px; text-align: center; color: white;">
-                    <h2>🔥 Phase 3: AI 泡沫化 - 積極進攻</h2>
-                    <p>當前處於 AI 泡沫化階段，資金瘋狂湧入，應採取積極進攻策略。</p>
-                </div>
-                """, unsafe_allow_html=True)
-            elif phase and "4" in str(phase):
-                st.markdown("""
-                <div style="background: linear-gradient(90deg, #00008B, #2F4F4F); padding: 20px; border-radius: 10px; text-align: center; color: white;">
-                    <h2>❄️ Phase 4: 泡沫破裂 - 現金為王</h2>
-                    <p>AI 泡沫破裂，市場進入衰退期，應保守操作，現金為王。</p>
-                </div>
-                """, unsafe_allow_html=True)
-            else:
-                st.warning("未偵測到明確的循環階段 (Phase)。")
-
-            st.markdown("---")
-
-            # 紅綠燈矩陣
-            st.subheader("🚦 宏觀紅綠燈矩陣")
-            logic_data = macro_data.get("logic")
-            if logic_data:
-                cols = st.columns(4)
-                for i, item in enumerate(logic_data):
-                    with cols[i % 4]:
-                        name, value, signal = item
-                        light = "🟢" if "綠燈" in str(signal) else "🔴"
-                        st.metric(label=f"{light} {name}", value=f"{value:.2f}")
-            else:
-                st.info("請上傳 Logic_Engine.csv 以顯示紅綠燈矩陣。")
-
-            st.markdown("---")
-
-            # 河流圖
-            st.subheader("🌊 美股寬度指標 (河流圖)")
-            breadth_data = macro_data.get("breadth")
-            if breadth_data is not None and not breadth_data.empty:
-                st.area_chart(breadth_data.set_index('Date'), color=['#ff4b4b'])
-            else:
-                st.info("請上傳包含「寬度」的 CSV 檔案以顯示河流圖。")
-
-            st.markdown("---")
-
-            # 資產雷達
-            st.subheader("💰 資產雷達")
-            cash_level = macro_data.get("portfolio")
-            if cash_level is not None:
-                st.metric("現金水位 (Cash Level)", f"{cash_level:,.0f}")
-            else:
-                st.info("請上傳 Portfolio.csv 以顯示現金水位。")
-
-    # ==========================================
-    # [TAB 6] 維修中插槽 (完全保留)
-    # ==========================================
+        st.subheader("🔧 宏觀對沖 (Macro Hedge)")
+        st.warning("""
+        **功能預覽**：
+        - 多資產相關性矩陣
+        - Beta 對沖策略建議
+        - 全球市場聯動分析
+        
+        🚧 此功能正在開發中，敬請期待...
+        """)
+    
     with tab6:
         st.subheader("🔧 回測沙盒 (Backtest Sandbox)")
         st.warning("""
